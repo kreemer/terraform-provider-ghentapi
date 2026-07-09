@@ -18,14 +18,16 @@ import (
 // newTestClient returns a Client pointed at baseURL with the test RSA key
 // pre-loaded for both enterprise and org app credentials.
 func newTestClient(baseURL string) *Client {
-	return NewClient(
-		baseURL,
-		"ent-app-id",
-		"ent-install-id",
-		[]byte(testRSAKey),
-		"org-app-id",
-		[]byte(testRSAKey),
-	)
+	return NewClient(ClientConfig{
+		BaseURL:                     baseURL,
+		EnterpriseAppID:             "ent-app-id",
+		EnterpriseAppInstallationID: "ent-install-id",
+		EnterpriseAppPEM:            []byte(testRSAKey),
+		OrgAppID:                    "org-app-id",
+		OrgAppClientID:              "org-client-id",
+		OrgAppPEM:                   []byte(testRSAKey),
+		AutoInstall:                 true,
+	})
 }
 
 func TestClient_Do_RetryOnServerError(t *testing.T) {
@@ -140,7 +142,6 @@ func TestClient_Do_JSONBody(t *testing.T) {
 }
 
 func TestClient_DoWithEnterpriseAuth_InjectsHeader(t *testing.T) {
-	// Serve two endpoints: the token endpoint and the real endpoint.
 	var authHeader string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,21 +174,42 @@ func TestClient_DoWithOrgAuth_InjectsHeader(t *testing.T) {
 	var authHeader string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/app/installations/org-install-42/access_tokens" {
+		switch r.URL.Path {
+		case "/app/installations/ent-install-id/access_tokens":
+			// Enterprise installation token request.
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"token":      "ent-token-xyz",
+				"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
+			})
+		case "/app/installations/ent-install-id":
+			// Enterprise installation info — returns the enterprise slug.
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"account": map[string]string{"login": "test-enterprise"},
+			})
+		case "/enterprises/test-enterprise/apps/organizations/my-org/installations":
+			// List org installations — return our org app installation.
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+				{"id": 42, "client_id": "org-client-id"},
+			})
+		case "/app/installations/42/access_tokens":
+			// Org installation token request.
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"token":      "org-token-abc",
 				"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
 			})
-			return
+		default:
+			authHeader = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
 		}
-		authHeader = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	resp, err := c.DoWithOrgAuth(context.Background(), "org-install-42", http.MethodGet, "/orgs/test", nil)
+	resp, err := c.DoWithOrgAuth(context.Background(), "my-org", http.MethodGet, "/orgs/my-org", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -195,5 +217,82 @@ func TestClient_DoWithOrgAuth_InjectsHeader(t *testing.T) {
 
 	if authHeader != "token org-token-abc" {
 		t.Errorf("expected Authorization: token org-token-abc, got %q", authHeader)
+	}
+}
+
+func TestClient_EnsureOrgInstallation_AutoInstall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/ent-install-id/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"token":      "ent-token-xyz",
+				"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
+			})
+		case "/app/installations/ent-install-id":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"account": map[string]string{"login": "test-enterprise"},
+			})
+		case "/enterprises/test-enterprise/apps/organizations/new-org/installations":
+			if r.Method == http.MethodGet {
+				// Not installed yet — return empty list.
+				w.WriteHeader(http.StatusOK)
+				_, _ = fmt.Fprint(w, "[]")
+			} else if r.Method == http.MethodPost {
+				// Install it.
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	id, err := c.EnsureOrgInstallation(context.Background(), "new-org")
+	if err != nil {
+		t.Fatalf("EnsureOrgInstallation error: %v", err)
+	}
+	if id != "99" {
+		t.Errorf("expected installation ID 99, got %q", id)
+	}
+}
+
+func TestClient_EnsureOrgInstallation_NoAutoInstall_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/ent-install-id/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"token":      "ent-token",
+				"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
+			})
+		case "/app/installations/ent-install-id":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"account": map[string]string{"login": "test-enterprise"},
+			})
+		case "/enterprises/test-enterprise/apps/organizations/uninstalled-org/installations":
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, "[]")
+		}
+	}))
+	defer srv.Close()
+
+	cfg := ClientConfig{
+		BaseURL:                     srv.URL,
+		EnterpriseAppID:             "ent-app-id",
+		EnterpriseAppInstallationID: "ent-install-id",
+		EnterpriseAppPEM:            []byte(testRSAKey),
+		OrgAppID:                    "org-app-id",
+		OrgAppClientID:              "org-client-id",
+		OrgAppPEM:                   []byte(testRSAKey),
+		AutoInstall:                 false,
+	}
+	c := NewClient(cfg)
+
+	_, err := c.EnsureOrgInstallation(context.Background(), "uninstalled-org")
+	if err == nil {
+		t.Fatal("expected error when auto_install=false and app not installed, got nil")
 	}
 }

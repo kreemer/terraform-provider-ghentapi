@@ -86,10 +86,10 @@
 
 ## 4. `internal/provider/provider.go` — Provider Definition
 
-- [ ] Rename `ScaffoldingProvider` → `GhentapiProvider` and update all
+- [x] Rename `ScaffoldingProvider` → `GhentapiProvider` and update all
       references.
-- [ ] Update `Metadata` to set `TypeName = "ghentapi"`.
-- [ ] Define `GhentapiProviderModel` with all required attributes (all
+- [x] Update `Metadata` to set `TypeName = "ghentapi"`.
+- [x] Define `GhentapiProviderModel` with all required attributes (all
       `types.String`):
   - `base_url` (optional, default `"https://api.github.com"`)
   - `enterprise_app_id` (required)
@@ -98,59 +98,34 @@
   - `org_app_id` (required)
   - `org_app_client_id` (optional — used in resource schema)
   - `org_app_pem_file` (required, sensitive)
-- [ ] Implement `Schema` with appropriate `MarkdownDescription` and sensitivity
+- [x] Implement `Schema` with appropriate `MarkdownDescription` and sensitivity
       markers for PEM fields.
-- [ ] Implement `Configure`:
+- [x] Implement `Configure`:
   - Validate that required fields are not null/unknown.
   - Instantiate `githubclient.NewClient(...)` using the configured values.
   - Set `resp.DataSourceData` and `resp.ResourceData` to the client.
-- [ ] Register resources: `NewOrgAppInstallationResource`, `NewOrgSettingResource`.
-- [ ] Register data sources: `NewInstallationTokenDataSource`.
-- [ ] Remove registrations of all scaffolding example resources / data sources /
+- [x] Register resources: `NewOrgAppInstallationResource`, `NewOrgSettingResource`.
+- [x] Register data sources: `NewInstallationTokenDataSource`.
+- [x] Remove registrations of all scaffolding example resources / data sources /
       functions / actions.
-- [ ] Drop `provider.ProviderWithFunctions`, `ProviderWithEphemeralResources`,
+- [x] Drop `provider.ProviderWithFunctions`, `ProviderWithEphemeralResources`,
       and `ProviderWithActions` interface assertions if those capabilities are
       not used.
 
 ---
 
-## 5. `internal/provider/resource_org_app_installation.go`
+## 5. REMOVED — replaced by implicit installation
 
-- [ ] Define `OrgAppInstallationResource` struct implementing
-      `resource.Resource` and `resource.ResourceWithImportState`.
-- [ ] Define `OrgAppInstallationModel` with tfsdk tags:
-  - `enterprise_slug` (string, required, forces-new)
-  - `organization` (string, required, forces-new)
-  - `org_app_client_id` (string, required, forces-new)
-  - `repository_selection` (string, optional, default `"all"`)
-  - `installation_id` (string, computed)
-- [ ] Implement `Metadata` → type name `"ghentapi_org_app_installation"`.
-- [ ] Implement `Schema` with all attributes and appropriate plan modifiers
-      (UseStateForUnknown for `installation_id`; RequiresReplace for
-      force-new attributes).
-- [ ] Implement `Create`:
-  - POST `/enterprises/{enterprise_slug}/apps/organizations/{org}/installations`
-    with body `{ "client_id": ..., "repository_selection": ... }` using
-    enterprise token.
-  - Store `installation_id` from response into state.
-- [ ] Implement `Read`:
-  - GET `/enterprises/{enterprise_slug}/apps/organizations/{org}/installations`
-    (paginated list) using enterprise token.
-  - Find the entry where `client_id == org_app_client_id`.
-  - If not found, call `resp.State.RemoveResource(ctx)` to signal drift.
-  - Update `installation_id` in state; ignore all other fields returned by API.
-- [ ] Implement `Update` → set RequiresReplace on all mutable attributes so
-      no Update body is ever needed (force-new pattern).
-- [ ] Implement `Delete`:
-  - DELETE `/enterprises/{enterprise_slug}/apps/organizations/{org}/installations/{installation_id}`
-    using enterprise token.
-  - On 404, treat as already deleted (no error).
-- [ ] Implement `ImportState` using `resource.ImportStatePassthroughID` or a
-      custom import that accepts `enterprise_slug/organization/installation_id`.
-- [ ] Write acceptance tests using a mock HTTP server:
-  - Create lifecycle (POST → GET list → DELETE).
-  - Read drift detection (org not in list → resource removed).
-  - 404 on delete treated as success.
+> Design change: The explicit resource was replaced by `EnsureOrgInstallation`
+> in the provider client. See section 3 (client.go) for implementation.
+
+- [x] Removed `resource_org_app_installation.go`
+- [x] Provider config: added `auto_install_org_app`, `repository_selection`, made `org_app_client_id` required
+- [x] Added `ClientConfig` struct and refactored `NewClient`
+- [x] Implemented `Client.EnsureOrgInstallation(ctx, org)`: cache → list → install/error
+- [x] Implemented `Client.OrgToken(ctx, org)` via `EnsureOrgInstallation`
+- [x] `DoWithOrgAuth` now takes `org` instead of `installationID`
+- [x] 8 client tests pass
 
 ---
 
@@ -159,14 +134,13 @@
 - [ ] Define `OrgSettingResource` struct implementing `resource.Resource`.
 - [ ] Define `OrgSettingModel` with tfsdk tags:
   - `organization` (string, required, forces-new)
-  - `installation_id` (string, required)
   - `settings` (map of string, required)
   - `api_response` (string, computed, sensitive — full JSON for debugging)
 - [ ] Implement `Metadata` → type name `"ghentapi_org_setting"`.
 - [ ] Implement `Schema`.
 - [ ] Implement `Create` / `Update` (same logic):
-  - PATCH `/orgs/{org}` with the `settings` map as JSON body using org token
-    (obtained via `installation_id`).
+  - PATCH `/orgs/{org}` with the `settings` map as JSON body using
+    `client.DoWithOrgAuth(ctx, org, ...)` (installation resolved automatically).
   - Store full response JSON in `api_response`.
 - [ ] Implement `Read`:
   - GET `/orgs/{org}` using org token.
@@ -190,12 +164,12 @@
 - [ ] Define `InstallationTokenDataSource` struct implementing
       `datasource.DataSource`.
 - [ ] Define `InstallationTokenModel` with tfsdk tags:
-  - `installation_id` (string, required)
+  - `organization` (string, required)
   - `token` (string, computed, sensitive)
 - [ ] Implement `Metadata` → type name `"ghentapi_installation_token"`.
 - [ ] Implement `Schema` with `token` marked `Sensitive: true`.
 - [ ] Implement `Read`:
-  - Call `client.orgToken(ctx, installationID)` to get a fresh token.
+  - Call `client.OrgToken(ctx, org)` to get a fresh token via `EnsureOrgInstallation`.
   - Set `state.Token` — token is never stored in permanent state because
     `sensitive` data sources are re-evaluated on every plan/apply.
   - **Do not** persist the token value anywhere else.

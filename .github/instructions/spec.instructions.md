@@ -11,10 +11,11 @@ and are always fresh at request time.
 The provider needs two GitHub Apps: One which is installed at the enterprise with
 the permission to install other GitHub Apps. The other GitHub App is for the
 organisation, which handles org-settings permissions. The enterprise GitHub
-App will install the org-app within the organisation by a special resource.
+App installs the org-app within the organisation **automatically** the first time
+a resource targets that organisation (implicit installation).
 
-See in https://docs.github.com/en/enterprise-cloud@latest/admin/managing-github-apps-for-your-enterprise/automate-installations
-the official documentation about how to install enterprise/org apps.
+See https://docs.github.com/en/enterprise-cloud@latest/admin/managing-github-apps-for-your-enterprise/automate-installations
+for the official documentation about how to install enterprise/org apps.
 
 ---
 
@@ -41,11 +42,10 @@ cleanly: no token ever touches state.
 terraform-provider-ghentapi
 ├── internal/
 │   ├── githubclient/
-│   │   ├── auth.go          # GitHub App JWT + installation token generation
-│   │   └── client.go        # HTTP client wrapper (retries, base URL switching)
+│   │   ├── auth.go          # GitHub App JWT + installation token generation + cache
+│   │   └── client.go        # HTTP client wrapper (retries, implicit org installation)
 │   └── provider/
 │       ├── provider.go      # Provider schema + configuration
-│       ├── resource_org_app_installation.go
 │       ├── resource_org_setting.go
 │       └── datasource_installation_token.go   # optional helper data source
 ├── main.go
@@ -76,11 +76,27 @@ provider "ghentapi" {
 
   # Org-level GitHub App credentials
   # Used to manage settings within each organisation after installation.
-  org_app_id      = var.org_app_id
-  org_app_client_id = var.org_app_client_id
-  org_app_pem_file = var.org_pem   # sensitive, raw PEM string
+  org_app_id        = var.org_app_id
+  org_app_client_id = var.org_app_client_id   # required; used for install lookup
+  org_app_pem_file  = var.org_pem             # sensitive, raw PEM string
+
+  # Implicit installation behaviour (optional)
+  # When true (default), the org app is installed automatically the first time
+  # a resource targets an organisation that doesn't have it yet.
+  # When false, an error is returned instead.
+  auto_install_org_app = true
+
+  # Repository selection used when auto-installing. "all" or "selected".
+  repository_selection = "all"
 }
 ```
+
+### Enterprise slug resolution (internal detail)
+
+The provider resolves the enterprise slug automatically at first use by calling
+`GET /app/installations/{enterprise_app_installation_id}` with the enterprise
+app JWT. The `account.login` field in the response is the slug. The result is
+cached in memory for the lifetime of the Terraform run.
 
 ### Token generation (internal detail, not stored in state)
 
@@ -93,52 +109,20 @@ For every API call the provider:
    before expiry to give a safety margin.
 4. **Never writes any token to Terraform state.**
 
----
+### Implicit org app installation (internal detail)
 
-## Resource: `ghentapi_org_app_installation`
+When a resource first targets an organisation, `EnsureOrgInstallation(ctx, org)`
+is called:
+1. Check the in-memory org→installation_id cache.
+2. Call `GET /enterprises/{slug}/apps/organizations/{org}/installations` and
+   search for an entry whose `client_id` matches `org_app_client_id`.
+3. If found: cache the installation ID and continue.
+4. If not found and `auto_install_org_app = true`: call
+   `POST /enterprises/{slug}/apps/organizations/{org}/installations` to install,
+   cache the new ID, and continue.
+5. If not found and `auto_install_org_app = false`: return a descriptive error.
 
-Installs the org-level GitHub App into an organisation via the enterprise API.
-Equivalent to the current `restapi_object.org_app_installation`.
-
-```hcl
-resource "ghentapi_org_app_installation" "this" {
-  for_each = toset(var.organizations)
-
-  enterprise_slug      = "university-of-bern"
-  organization         = each.key
-  org_app_client_id    = var.org_app_client_id
-
-  # "all" or "selected"
-  repository_selection = "all"
-}
-```
-
-### Computed attributes
-
-| Attribute        | Type   | Description                                      |
-|-----------------|--------|--------------------------------------------------|
-| `installation_id` | string | The numeric installation ID returned by the API |
-
-### API mapping
-
-| Terraform lifecycle | HTTP method | Path                                                                                     |
-|--------------------|-------------|------------------------------------------------------------------------------------------|
-| Create             | POST        | `/enterprises/{enterprise}/apps/organizations/{org}/installations`                      |
-| Read               | GET         | `/enterprises/{enterprise}/apps/organizations/{org}/installations` (search by client_id)|
-| Delete             | DELETE      | `/enterprises/{enterprise}/apps/organizations/{org}/installations/{installation_id}`    |
-| Update             | force-new   | Any change to `org_app_client_id` triggers destroy + create                              |
-
-The Read uses a list + search pattern (search for the installation where
-`client_id == org_app_client_id`) because the GitHub API does not have a
-single-item GET by client_id.
-
-Fields returned by the API that are NOT in the resource schema
-(`app_slug`, `created_at`, `updated_at`, `events`, `permissions`,
-`repositories_url`) must be ignored during drift detection.
-
-### Authentication
-
-Uses the **enterprise app** installation token (from provider config).
+The app is **never uninstalled** when resources are destroyed (safe default).
 
 ---
 
@@ -159,34 +143,30 @@ resource "ghentapi_org_setting" "this" {
   settings = {
     billing_email = "github.id@example.ch"
   }
-
-  # The installation token for this org is obtained automatically from
-  # ghentapi_org_app_installation.this[each.key].installation_id
-  installation_id = ghentapi_org_app_installation.this[each.key].installation_id
 }
 ```
 
 ### Attributes
 
-| Attribute         | Type        | Description                                               |
-|------------------|-------------|-----------------------------------------------------------|
-| `organization`   | string      | GitHub organisation login                                |
-| `settings`       | map(string) | Keys/values to manage.  Only these are drift-checked.    |
-| `installation_id`| string      | Installation ID used to obtain the per-org token.         |
-| `api_response`   | string      | Full JSON body from the last successful GET (for debug). |
+| Attribute       | Type        | Description                                              |
+|----------------|-------------|----------------------------------------------------------|
+| `organization` | string      | GitHub organisation login                               |
+| `settings`     | map(string) | Keys/values to manage.  Only these are drift-checked.   |
+| `api_response` | string      | Full JSON body from the last successful GET (for debug). |
 
 ### API mapping
 
-| Terraform lifecycle | HTTP method | Path              |
-|--------------------|-------------|-------------------|
-| Create / Update    | PATCH       | `/orgs/{org}`    |
-| Read               | GET         | `/orgs/{org}`    |
+| Terraform lifecycle | HTTP method | Path           |
+|--------------------|-------------|----------------|
+| Create / Update    | PATCH       | `/orgs/{org}` |
+| Read               | GET         | `/orgs/{org}` |
 | Delete             | no-op       | (settings can't be "deleted", resource is just removed from state) |
 
 ### Authentication
 
-Uses the **org app** installation token, obtained using `installation_id`.
-The token is generated fresh per API call (cached in memory, never in state).
+The provider calls `EnsureOrgInstallation(ctx, org)` to obtain the installation
+ID, then uses the org app installation token. The token is generated fresh per
+API call (cached in memory, never in state).
 
 ### Drift detection
 
@@ -197,17 +177,23 @@ API response.  Extra fields returned by the API are silently ignored.
 
 ## Data source: `ghentapi_installation_token` (optional / nice to have)
 
-Exposes the installation token as a data source so it can be passed to other
-providers if needed.  The token is marked `sensitive = true` and is **not**
-stored in state (use `ephemeral` resource semantics if available in the target
-Terraform version, otherwise sensitive output).
+Exposes the org app installation token as a data source so it can be passed to
+other providers if needed.  The token is marked `sensitive = true` and is
+**not** stored in state.
 
 ```hcl
 data "ghentapi_installation_token" "org" {
-  for_each        = toset(var.organizations)
-  installation_id = ghentapi_org_app_installation.this[each.key].installation_id
+  for_each     = toset(var.organizations)
+  organization = each.key
 }
 ```
+
+### Attributes
+
+| Attribute      | Type   | Description                                   |
+|---------------|--------|-----------------------------------------------|
+| `organization` | string | GitHub organisation login (input)            |
+| `token`        | string | Short-lived installation token (sensitive)   |
 
 ---
 
@@ -230,21 +216,15 @@ provider "ghentapi" {
   enterprise_app_installation_id = var.ent_app_installation_id
   enterprise_app_pem_file        = var.ent_pem
   org_app_id                     = var.org_app_id
+  org_app_client_id              = var.org_app_client_id
   org_app_pem_file               = var.org_pem
-}
-
-resource "ghentapi_org_app_installation" "this" {
-  for_each             = toset(var.organizations)
-  enterprise_slug      = "university-of-bern"
-  organization         = each.key
-  org_app_client_id    = var.org_app_client_id
-  repository_selection = "all"
+  auto_install_org_app           = true
+  repository_selection           = "all"
 }
 
 resource "ghentapi_org_setting" "this" {
-  for_each        = toset(var.organizations)
-  organization    = each.key
-  installation_id = ghentapi_org_app_installation.this[each.key].installation_id
+  for_each     = toset(var.organizations)
+  organization = each.key
   settings = {
     billing_email = "github.id@unibe.ch"
   }
@@ -259,16 +239,18 @@ resource "ghentapi_org_setting" "this" {
    appear in any part of `terraform.tfstate`.
 2. **In-memory token cache** — cache tokens for their remaining lifetime minus
    a 5-minute safety margin; share the cache across all resources in one run.
-3. **GHES + GHEC** — the `base_url` provider attribute selects the endpoint;
+3. **In-memory installation cache** — cache org→installation_id mappings for
+   the duration of a single Terraform run.
+4. **GHES + GHEC** — the `base_url` provider attribute selects the endpoint;
    no compile-time switch.
-4. **Retries** — on HTTP 429 or 5xx, retry up to 3 times with exponential
+5. **Retries** — on HTTP 429 or 5xx, retry up to 3 times with exponential
    back-off.
-5. **Terraform Plugin Framework** — use `hashicorp/terraform-plugin-framework`,
+6. **Terraform Plugin Framework** — use `hashicorp/terraform-plugin-framework`,
    not the legacy `hashicorp/terraform-plugin-sdk/v2`.
-6. **Go module path** — `github.com/kreemer/terraform-provider-ghentapi`
-7. **Tests** — unit tests for the token cache and JWT generation; acceptance
-   tests for the two resources using a mock HTTP server (pattern from
-   `hashicorp/terraform-plugin-framework`'s `resource.UnitTest`).
+7. **Go module path** — `github.com/kreemer/terraform-provider-ghentapi`
+8. **Tests** — unit tests for the token cache, JWT generation, and
+   `EnsureOrgInstallation`; acceptance tests for resources using a mock HTTP
+   server.
 
 ---
 
@@ -276,18 +258,22 @@ resource "ghentapi_org_setting" "this" {
 
 ```
 internal/githubclient/
-  auth.go          — generateJWT(appID, pemKey) string
-                     getInstallationToken(ctx, installationID) (string, error)
-                     tokenCache struct { ... }
-  client.go        — NewClient(baseURL, ...) *Client
-                     Client.Do(ctx, method, path, body) (*http.Response, error)
+  auth.go     — generateJWT(appID, pemKey) string
+                getInstallationToken(ctx, installationID) (string, error)
+                TokenCache struct { ... }
+  client.go   — ClientConfig struct
+                NewClient(cfg ClientConfig) *Client
+                Client.EnsureOrgInstallation(ctx, org) (string, error)
+                Client.OrgToken(ctx, org) (string, error)
+                Client.Do(ctx, method, path, body, headers) (*http.Response, error)
+                Client.DoWithEnterpriseAuth(ctx, method, path, body) (*http.Response, error)
+                Client.DoWithOrgAuth(ctx, org, method, path, body) (*http.Response, error)
 
 internal/provider/
-  provider.go      — Schema, Configure, Resources, DataSources
-  resource_org_app_installation.go
+  provider.go                      — Schema, Configure, Resources, DataSources
   resource_org_setting.go
   datasource_installation_token.go
-  testhelpers_test.go   — shared mock server helpers for tests
+  testhelpers_test.go              — shared mock server helpers for tests
 ```
 
 ---
@@ -340,6 +326,22 @@ func (c *TokenCache) Get(ctx context.Context, installationID string, fetch func(
 }
 ```
 
+### Implicit installation (`client.go`)
+
+```go
+func (c *Client) EnsureOrgInstallation(ctx context.Context, org string) (string, error) {
+    c.orgInstallMu.Lock()
+    if id, ok := c.orgInstallCache[org]; ok {
+        c.orgInstallMu.Unlock()
+        return id, nil
+    }
+    c.orgInstallMu.Unlock()
+
+    slug, err := c.resolveEnterpriseSlug(ctx)  // cached after first call
+    // ... list installations, find by client_id, install if needed ...
+}
+```
+
 ### Read() drift detection for `ghentapi_org_setting`
 
 ```go
@@ -355,3 +357,4 @@ for k := range plan.Settings.Elements() {
 }
 state.Settings = types.MapValueMust(types.StringType, /* convert result */)
 ```
+
