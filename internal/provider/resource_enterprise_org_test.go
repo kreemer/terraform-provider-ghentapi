@@ -18,11 +18,11 @@ import (
 
 // mockOrg represents a single organisation in the mock server state.
 type mockOrg struct {
-	login           string
-	billingEmail    string
-	displayName     string
-	nodeID          string
-	installationID  int // org-app installation ID assigned at install time
+	login          string
+	billingEmail   string
+	displayName    string
+	nodeID         string
+	installationID int // org-app installation ID assigned at install time
 }
 
 // mockOrgServerState is shared mutable state for the enterprise org mock server.
@@ -360,11 +360,11 @@ resource "ghentapi_enterprise_org" "test" {
 }
 
 // TestEnterpriseOrgResource_Import verifies the full import lifecycle:
-// 1. Pre-seed the mock server with an existing org (simulating an org that
-//    exists on GitHub but is not yet in Terraform state).
-// 2. Import by org name.
-// 3. Verify billing_email and display_name are populated from the API.
-// 4. Verify a subsequent apply with admin_logins in config settles without error.
+//  1. Pre-seed the mock server with an existing org (simulating an org that
+//     exists on GitHub but is not yet in Terraform state).
+//  2. Import by org name.
+//  3. Verify billing_email and display_name are populated from the API.
+//  4. Verify a subsequent apply with admin_logins in config settles without error.
 func TestEnterpriseOrgResource_Import(t *testing.T) {
 	srv, state := newEnterpriseOrgMockServer(t)
 

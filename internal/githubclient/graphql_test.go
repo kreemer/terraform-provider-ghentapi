@@ -36,15 +36,15 @@ func newGraphQLMockServer(t *testing.T, graphqlHandler func(w http.ResponseWrite
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/api/v3/app/installations/ent-install-id/access_tokens":
+		switch r.URL.Path {
+		case "/api/v3/app/installations/ent-install-id/access_tokens":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"token":      "ent-token",
 				"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
 			})
 
-		case r.URL.Path == "/api/graphql":
+		case "/api/graphql":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			graphqlHandler(w, body)
