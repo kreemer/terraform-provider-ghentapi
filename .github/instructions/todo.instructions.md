@@ -56,30 +56,30 @@
 
 ## 3. `internal/githubclient/client.go` — HTTP Client Wrapper
 
-- [ ] Implement `Client` struct holding:
+- [x] Implement `Client` struct holding:
   - `baseURL string`
   - `httpClient *http.Client`
   - `enterpriseAppID`, `enterpriseAppInstallationID`, `enterpriseAppPEM []byte`
   - `orgAppID`, `orgAppPEM []byte`
   - `cache *TokenCache`
-- [ ] Implement `NewClient(baseURL string, ...) *Client` constructor.
-- [ ] Implement `Client.enterpriseToken(ctx) (string, error)`:
+- [x] Implement `NewClient(baseURL string, ...) *Client` constructor.
+- [x] Implement `Client.enterpriseToken(ctx) (string, error)`:
   - Calls `generateJWT` with enterprise app credentials.
   - Calls `cache.Get` with `enterpriseAppInstallationID` and a fetch function
     that calls `getInstallationToken`.
-- [ ] Implement `Client.orgToken(ctx, installationID string) (string, error)`:
+- [x] Implement `Client.orgToken(ctx, installationID string) (string, error)`:
   - Calls `generateJWT` with org app credentials.
   - Calls `cache.Get` with the given `installationID`.
-- [ ] Implement `Client.Do(ctx, method, path string, body interface{}) (*http.Response, error)`:
+- [x] Implement `Client.Do(ctx, method, path string, body interface{}) (*http.Response, error)`:
   - Serialises body to JSON when non-nil.
   - Executes the HTTP request.
   - On HTTP 429 or 5xx, retries up to 3 times with exponential back-off
     (1 s, 2 s, 4 s).
   - Returns the final response or an error.
-- [ ] Implement `Client.DoWithEnterpriseAuth(ctx, method, path string, body interface{}) (*http.Response, error)`:
+- [x] Implement `Client.DoWithEnterpriseAuth(ctx, method, path string, body interface{}) (*http.Response, error)`:
   - Fetches enterprise token and injects `Authorization: token {tok}` header
     before calling `Do`.
-- [ ] Implement `Client.DoWithOrgAuth(ctx, installationID, method, path string, body interface{}) (*http.Response, error)`:
+- [x] Implement `Client.DoWithOrgAuth(ctx, installationID, method, path string, body interface{}) (*http.Response, error)`:
   - Fetches org token for `installationID` and injects header before calling `Do`.
 
 ---
