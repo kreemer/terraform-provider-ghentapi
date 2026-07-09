@@ -8,23 +8,23 @@
 
 ## 1. Repository / Module Bootstrap
 
-- [ ] Rename the Go module from `github.com/hashicorp/terraform-provider-scaffolding-framework`
+- [x] Rename the Go module from `github.com/hashicorp/terraform-provider-scaffolding-framework`
       to `github.com/kreemer/terraform-provider-ghentapi` in `go.mod` and all
       import paths across the codebase.
-- [ ] Update `main.go`:
+- [x] Update `main.go`:
   - Change the provider address to `registry.terraform.io/kreemer/ghentapi`.
   - Import `github.com/kreemer/terraform-provider-ghentapi/internal/provider`.
-- [ ] Remove all scaffolding example files that will not be reused:
+- [x] Remove all scaffolding example files that will not be reused:
   - `internal/provider/example_action.go` + test
   - `internal/provider/example_data_source.go` + test
   - `internal/provider/example_ephemeral_resource.go` + test
   - `internal/provider/example_function.go` + test
   - `internal/provider/example_resource.go` + test
-- [ ] Add required new dependencies to `go.mod`:
+- [x] Add required new dependencies to `go.mod`:
   - `github.com/golang-jwt/jwt/v5` (JWT generation)
   - Verify `github.com/hashicorp/terraform-plugin-framework >= v1.13` is present
     (already at v1.19 — no action needed).
-- [ ] Run `go mod tidy` to clean up indirect dependencies.
+- [x] Run `go mod tidy` to clean up indirect dependencies.
 
 ---
 
