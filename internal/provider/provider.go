@@ -146,6 +146,7 @@ func resolvePEM(value string) []byte {
 func (p *GhentapiProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewOrgSettingResource,
+		NewEnterpriseOrgResource,
 	}
 }
 

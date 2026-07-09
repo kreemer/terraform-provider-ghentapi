@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,6 +52,11 @@ type Client struct {
 	// orgInstallMu guards orgInstallCache.
 	orgInstallMu    sync.Mutex
 	orgInstallCache map[string]string // org login → installation ID
+
+	// enterpriseNodeID is resolved once via GraphQL from the enterprise slug.
+	enterpriseNodeIDOnce sync.Once
+	enterpriseNodeID     string
+	enterpriseNodeIDErr  error
 }
 
 // NewClient constructs a Client from the given config. baseURL must not have a
@@ -357,4 +363,190 @@ func (c *Client) DoWithOrgAuth(ctx context.Context, org, method, path string, bo
 	return c.Do(ctx, method, path, body, map[string]string{
 		"Authorization": "token " + tok,
 	})
+}
+
+// graphqlURL derives the GraphQL endpoint URL from the configured REST base URL.
+// For GHES the REST base is  .../api/v3  and GraphQL lives at  .../api/graphql.
+// For GHEC the REST base is  https://api.github.com  and GraphQL at  .../graphql.
+func (c *Client) graphqlURL() string {
+	if strings.HasSuffix(c.cfg.BaseURL, "/api/v3") {
+		return strings.TrimSuffix(c.cfg.BaseURL, "/api/v3") + "/api/graphql"
+	}
+	return c.cfg.BaseURL + "/graphql"
+}
+
+// DoGraphQL executes a GraphQL query or mutation authenticated as the enterprise
+// app. Retries are performed for HTTP 429 and 5xx responses (same policy as Do).
+func (c *Client) DoGraphQL(ctx context.Context, query string, variables map[string]any) (json.RawMessage, error) {
+	tok, err := c.enterpriseToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("obtaining enterprise token for GraphQL: %w", err)
+	}
+
+	payload := map[string]any{"query": query, "variables": variables}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling GraphQL request: %w", err)
+	}
+
+	backoff := time.Second
+	var lastErr error
+
+	for attempt := 0; attempt <= 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL(), bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("building GraphQL request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "token "+tok)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("executing GraphQL request: %w", err)
+			continue
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("GraphQL request failed with status %d", resp.StatusCode)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("reading GraphQL response: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GraphQL request failed (status %d): %s", resp.StatusCode, string(body))
+		}
+
+		var result struct {
+			Data   json.RawMessage `json:"data"`
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("decoding GraphQL response: %w", err)
+		}
+		if len(result.Errors) > 0 {
+			msgs := make([]string, len(result.Errors))
+			for i, e := range result.Errors {
+				msgs[i] = e.Message
+			}
+			return nil, fmt.Errorf("GraphQL errors: %s", strings.Join(msgs, "; "))
+		}
+		return result.Data, nil
+	}
+
+	return nil, fmt.Errorf("GraphQL request failed after retries: %w", lastErr)
+}
+
+// resolveEnterpriseNodeID returns the GraphQL node ID of the enterprise account.
+// The slug is resolved via resolveEnterpriseSlug. Result is cached.
+func (c *Client) resolveEnterpriseNodeID(ctx context.Context) (string, error) {
+	c.enterpriseNodeIDOnce.Do(func() {
+		slug, err := c.resolveEnterpriseSlug(ctx)
+		if err != nil {
+			c.enterpriseNodeIDErr = err
+			return
+		}
+		const q = `query($slug: String!) { enterprise(slug: $slug) { id } }`
+		data, err := c.DoGraphQL(ctx, q, map[string]any{"slug": slug})
+		if err != nil {
+			c.enterpriseNodeIDErr = fmt.Errorf("resolving enterprise node ID: %w", err)
+			return
+		}
+		var result struct {
+			Enterprise struct {
+				ID string `json:"id"`
+			} `json:"enterprise"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			c.enterpriseNodeIDErr = fmt.Errorf("decoding enterprise node ID response: %w", err)
+			return
+		}
+		if result.Enterprise.ID == "" {
+			c.enterpriseNodeIDErr = fmt.Errorf("enterprise node ID not found in GraphQL response")
+			return
+		}
+		c.enterpriseNodeID = result.Enterprise.ID
+	})
+	return c.enterpriseNodeID, c.enterpriseNodeIDErr
+}
+
+// EnterpriseOrgInput holds the input parameters for creating an enterprise organisation.
+type EnterpriseOrgInput struct {
+	Login        string
+	BillingEmail string
+	AdminLogins  []string
+	DisplayName  string // optional
+}
+
+// EnterpriseOrgResult holds the result of a successful organisation creation.
+type EnterpriseOrgResult struct {
+	NodeID string
+	Login  string
+}
+
+// CreateEnterpriseOrg creates a new organisation within the enterprise using
+// the GraphQL createEnterpriseOrganization mutation authenticated as the
+// enterprise app. It does NOT install the org app into the new organisation.
+func (c *Client) CreateEnterpriseOrg(ctx context.Context, input EnterpriseOrgInput) (EnterpriseOrgResult, error) {
+	enterpriseID, err := c.resolveEnterpriseNodeID(ctx)
+	if err != nil {
+		return EnterpriseOrgResult{}, fmt.Errorf("resolving enterprise node ID: %w", err)
+	}
+
+	const mutation = `
+mutation CreateOrg($input: CreateEnterpriseOrganizationInput!) {
+  createEnterpriseOrganization(input: $input) {
+    organization {
+      id
+      login
+    }
+  }
+}`
+
+	inputVars := map[string]any{
+		"enterpriseId": enterpriseID,
+		"login":        input.Login,
+		"billingEmail": input.BillingEmail,
+		"adminLogins":  input.AdminLogins,
+	}
+	if input.DisplayName != "" {
+		inputVars["profileName"] = input.DisplayName
+	}
+
+	data, err := c.DoGraphQL(ctx, mutation, map[string]any{"input": inputVars})
+	if err != nil {
+		return EnterpriseOrgResult{}, fmt.Errorf("creating enterprise organisation %q: %w", input.Login, err)
+	}
+
+	var result struct {
+		CreateEnterpriseOrganization struct {
+			Organization struct {
+				ID    string `json:"id"`
+				Login string `json:"login"`
+			} `json:"organization"`
+		} `json:"createEnterpriseOrganization"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return EnterpriseOrgResult{}, fmt.Errorf("decoding create org response: %w", err)
+	}
+
+	org := result.CreateEnterpriseOrganization.Organization
+	return EnterpriseOrgResult{NodeID: org.ID, Login: org.Login}, nil
 }
