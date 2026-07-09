@@ -30,24 +30,24 @@
 
 ## 2. `internal/githubclient/auth.go` — JWT & Token Cache
 
-- [ ] Create directory `internal/githubclient/`.
-- [ ] Implement `generateJWT(appID string, pemKey []byte) (string, error)`:
+- [x] Create directory `internal/githubclient/`.
+- [x] Implement `generateJWT(appID string, pemKey []byte) (string, error)`:
   - Parse RSA private key from PEM using `jwt.ParseRSAPrivateKeyFromPEM`.
   - Build `MapClaims` with `iat` = now − 60 s, `exp` = now + 9 min, `iss` = appID.
   - Sign with RS256 and return the token string.
-- [ ] Implement `cachedToken` struct with fields `token string` and
+- [x] Implement `cachedToken` struct with fields `token string` and
       `expiresAt time.Time`.
-- [ ] Implement `TokenCache` struct with `mu sync.Mutex` and
+- [x] Implement `TokenCache` struct with `mu sync.Mutex` and
       `tokens map[string]cachedToken`.
-- [ ] Implement `TokenCache.Get(ctx, installationID, fetch func() (string, time.Time, error)) (string, error)`:
+- [x] Implement `TokenCache.Get(ctx, installationID, fetch func() (string, time.Time, error)) (string, error)`:
   - Return cached token if `time.Until(expiresAt) > 5 * time.Minute`.
   - Otherwise call `fetch()`, store result, and return new token.
-- [ ] Implement `getInstallationToken(ctx, baseURL, installationID, jwt string) (string, time.Time, error)`:
+- [x] Implement `getInstallationToken(ctx, baseURL, installationID, jwt string) (string, time.Time, error)`:
   - POST `{baseURL}/app/installations/{installationID}/access_tokens` with
     `Authorization: Bearer {jwt}`.
   - Parse `token` and `expires_at` from JSON response.
   - Return token string and expiry time.
-- [ ] Write unit tests in `auth_test.go`:
+- [x] Write unit tests in `auth_test.go`:
   - Test JWT claims (issued-at skew, expiry window, issuer).
   - Test cache hit (fetch not called on second Get within window).
   - Test cache miss / expiry (fetch called when token expires within 5 min).
