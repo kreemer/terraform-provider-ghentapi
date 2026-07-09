@@ -131,18 +131,18 @@
 
 ## 6. `internal/provider/resource_org_setting.go`
 
-- [ ] Define `OrgSettingResource` struct implementing `resource.Resource`.
-- [ ] Define `OrgSettingModel` with tfsdk tags:
+- [x] Define `OrgSettingResource` struct implementing `resource.Resource`.
+- [x] Define `OrgSettingModel` with tfsdk tags:
   - `organization` (string, required, forces-new)
   - `settings` (map of string, required)
   - `api_response` (string, computed, sensitive — full JSON for debugging)
-- [ ] Implement `Metadata` → type name `"ghentapi_org_setting"`.
-- [ ] Implement `Schema`.
-- [ ] Implement `Create` / `Update` (same logic):
+- [x] Implement `Metadata` → type name `"ghentapi_org_setting"`.
+- [x] Implement `Schema`.
+- [x] Implement `Create` / `Update` (same logic):
   - PATCH `/orgs/{org}` with the `settings` map as JSON body using
     `client.DoWithOrgAuth(ctx, org, ...)` (installation resolved automatically).
   - Store full response JSON in `api_response`.
-- [ ] Implement `Read`:
+- [x] Implement `Read`:
   - GET `/orgs/{org}` using org token.
   - Unmarshal full response JSON.
   - For each key in `state.Settings`, extract the matching value from the API
@@ -150,8 +150,8 @@
   - Ignore all keys not present in the current settings map (no drift on
     unmanaged fields).
   - Store full response in `api_response`.
-- [ ] Implement `Delete` → no-op (just remove from state; log a debug message).
-- [ ] Write acceptance tests:
+- [x] Implement `Delete` → no-op (just remove from state; log a debug message).
+- [x] Write acceptance tests:
   - Create + Read lifecycle with mock org API.
   - Update (PATCH) when a settings value changes.
   - Drift detection: API returns different value → plan shows diff.
@@ -161,47 +161,46 @@
 
 ## 7. `internal/provider/datasource_installation_token.go`
 
-- [ ] Define `InstallationTokenDataSource` struct implementing
+- [x] Define `InstallationTokenDataSource` struct implementing
       `datasource.DataSource`.
-- [ ] Define `InstallationTokenModel` with tfsdk tags:
+- [x] Define `InstallationTokenModel` with tfsdk tags:
   - `organization` (string, required)
   - `token` (string, computed, sensitive)
-- [ ] Implement `Metadata` → type name `"ghentapi_installation_token"`.
-- [ ] Implement `Schema` with `token` marked `Sensitive: true`.
-- [ ] Implement `Read`:
+- [x] Implement `Metadata` → type name `"ghentapi_installation_token"`.
+- [x] Implement `Schema` with `token` marked `Sensitive: true`.
+- [x] Implement `Read`:
   - Call `client.OrgToken(ctx, org)` to get a fresh token via `EnsureOrgInstallation`.
   - Set `state.Token` — token is never stored in permanent state because
     `sensitive` data sources are re-evaluated on every plan/apply.
   - **Do not** persist the token value anywhere else.
-- [ ] Write a unit test verifying that the token attribute is marked sensitive
+- [x] Write a unit test verifying that the token attribute is marked sensitive
       in the schema.
 
 ---
 
 ## 8. Examples & Documentation
 
-- [ ] Replace `examples/provider/provider.tf` with a real `ghentapi` provider
+- [x] Replace `examples/provider/provider.tf` with a real `ghentapi` provider
       example (matching the spec's "Example full configuration").
-- [ ] Add `examples/resources/ghentapi_org_app_installation/resource.tf`.
-- [ ] Add `examples/resources/ghentapi_org_setting/resource.tf`.
-- [ ] Add `examples/data-sources/ghentapi_installation_token/data-source.tf`.
-- [ ] Remove scaffolding example files from `examples/`.
-- [ ] Update `docs/index.md` with the provider overview and configuration
+- [x] Add `examples/resources/ghentapi_org_setting/resource.tf`.
+- [x] Add `examples/data-sources/ghentapi_installation_token/data-source.tf`.
+- [x] Remove scaffolding example files from `examples/` (actions, ephemeral-resources, scaffolding dirs).
+- [x] Update `docs/index.md` with the provider overview and configuration
       reference.
-- [ ] Update `README.md` to describe the provider purpose, requirements, and
+- [x] Update `README.md` to describe the provider purpose, requirements, and
       usage.
 
 ---
 
 ## 9. CI / Tooling
 
-- [ ] Update `.goreleaser.yml` if the binary name needs changing.
-- [ ] Verify `GNUmakefile` targets (`build`, `test`, `testacc`, `lint`) work
+- [x] Update `.goreleaser.yml` — no changes needed (uses `{{ .ProjectName }}` template).
+- [x] Verify `GNUmakefile` targets (`build`, `test`, `testacc`, `lint`) work
       with the new module path.
-- [ ] Ensure `go vet ./...` and `golangci-lint run` pass with no new errors.
-- [ ] Confirm the GitHub Actions test workflow (`.github/workflows/test.yml`)
-      runs unit tests and acceptance tests (with mock server, no real GitHub
-      credentials required).
+- [x] `go vet ./...` passes with no errors.
+- [x] `golangci-lint run` passes with 0 issues.
+- [x] GitHub Actions test workflow (`.github/workflows/test.yml`) runs unit tests
+      and acceptance tests (using `resource.UnitTest` — no real GitHub credentials required).
 
 ---
 

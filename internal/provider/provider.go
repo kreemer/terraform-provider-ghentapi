@@ -101,17 +101,8 @@ func (p *GhentapiProvider) Configure(ctx context.Context, req provider.Configure
 		baseURL = data.BaseURL.ValueString()
 	}
 
-	entPEM, err := resolvePEM(data.EnterpriseAppPemFile.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid enterprise_app_pem_file", err.Error())
-		return
-	}
-
-	orgPEM, err := resolvePEM(data.OrgAppPemFile.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid org_app_pem_file", err.Error())
-		return
-	}
+	entPEM := resolvePEM(data.EnterpriseAppPemFile.ValueString())
+	orgPEM := resolvePEM(data.OrgAppPemFile.ValueString())
 
 	autoInstall := true
 	if !data.AutoInstallOrgApp.IsNull() && !data.AutoInstallOrgApp.IsUnknown() {
@@ -142,14 +133,14 @@ func (p *GhentapiProvider) Configure(ctx context.Context, req provider.Configure
 // resolvePEM returns the raw PEM bytes. If the value looks like a file path
 // and the file exists, its contents are read; otherwise the value itself is
 // treated as the PEM data.
-func resolvePEM(value string) ([]byte, error) {
+func resolvePEM(value string) []byte {
 	if len(value) > 0 && value[0] == '/' || (len(value) > 1 && value[1] == ':') {
 		data, err := os.ReadFile(value)
 		if err == nil {
-			return data, nil
+			return data
 		}
 	}
-	return []byte(value), nil
+	return []byte(value)
 }
 
 func (p *GhentapiProvider) Resources(ctx context.Context) []func() resource.Resource {

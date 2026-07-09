@@ -235,11 +235,12 @@ func TestClient_EnsureOrgInstallation_AutoInstall(t *testing.T) {
 				"account": map[string]string{"login": "test-enterprise"},
 			})
 		case "/enterprises/test-enterprise/apps/organizations/new-org/installations":
-			if r.Method == http.MethodGet {
+			switch r.Method {
+			case http.MethodGet:
 				// Not installed yet — return empty list.
 				w.WriteHeader(http.StatusOK)
 				_, _ = fmt.Fprint(w, "[]")
-			} else if r.Method == http.MethodPost {
+			case http.MethodPost:
 				// Install it.
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": 99})

@@ -24,10 +24,10 @@ type ClientConfig struct {
 	EnterpriseAppPEM            []byte
 
 	// Org-level GitHub App credentials — used to manage org settings.
-	OrgAppID             string
-	OrgAppClientID       string
-	OrgAppPEM            []byte
-	RepositorySelection  string // "all" or "selected"; defaults to "all"
+	OrgAppID            string
+	OrgAppClientID      string
+	OrgAppPEM           []byte
+	RepositorySelection string // "all" or "selected"; defaults to "all"
 
 	// AutoInstall controls whether the org app is installed automatically when
 	// EnsureOrgInstallation is called for an org that does not have it yet.
