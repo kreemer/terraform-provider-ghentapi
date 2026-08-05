@@ -197,10 +197,17 @@ func newEnterpriseOrgMockServer(t *testing.T) (*httptest.Server, *mockOrgServerS
 					return
 				}
 				state.mu.Lock()
+				// GitHub returns "name": null when the display name equals the
+				// login (no distinct display name is set), mirroring real API
+				// behaviour that this mock reproduces for regression testing.
+				var name any = org.displayName
+				if org.displayName == org.login {
+					name = nil
+				}
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"login":         org.login,
-					"name":          org.displayName,
+					"name":          name,
 					"billing_email": org.billingEmail,
 				})
 				state.mu.Unlock()
@@ -215,6 +222,33 @@ func newEnterpriseOrgMockServer(t *testing.T) (*httptest.Server, *mockOrgServerS
 	}))
 	t.Cleanup(srv.Close)
 	return srv, state
+}
+
+func TestEnterpriseOrgResource_DisplayNameEqualsLogin(t *testing.T) {
+	// Regression test: when display_name is set to the same value as the org
+	// login, GitHub's GET /orgs/{org} returns "name": null (no distinct
+	// display name), which previously caused "Provider produced inconsistent
+	// result after apply" because Read() reset display_name to "".
+	srv, _ := newEnterpriseOrgMockServer(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: unitTestFactories(),
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig(srv.URL) + `
+resource "ghentapi_enterprise_org" "full" {
+  name          = "test3aa-unibe-ch"
+  admin_logins  = ["admin-user"]
+  billing_email = "billing@example.com"
+  display_name  = "test3aa-unibe-ch"
+}`,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("ghentapi_enterprise_org.full", "name", "test3aa-unibe-ch"),
+					resource.TestCheckResourceAttr("ghentapi_enterprise_org.full", "display_name", "test3aa-unibe-ch"),
+				),
+			},
+		},
+	})
 }
 
 func TestEnterpriseOrgResource_CreateRead(t *testing.T) {

@@ -282,14 +282,22 @@ func (r *EnterpriseOrgResource) readIntoModel(ctx context.Context, model *Enterp
 		model.BillingEmail = types.StringValue(fmt.Sprint(v))
 	}
 	// The API field "name" is the display name; our "name" attribute is the login.
+	// GitHub's org resource represents the "profile name" (display name) as a
+	// separate value from the login, but returns "name": null when no distinct
+	// display name is set — which happens whenever the display name equals the
+	// login (as chosen at creation, e.g. via profileName defaulting to login).
+	// In that case, default display_name back to the login to avoid a spurious
+	// diff / "inconsistent result after apply" error.
+	login := org
+	if v, ok := apiData["login"]; ok && v != nil {
+		login = fmt.Sprint(v)
+	}
 	if v, ok := apiData["name"]; ok && v != nil {
 		model.DisplayName = types.StringValue(fmt.Sprint(v))
 	} else {
-		model.DisplayName = types.StringValue("")
+		model.DisplayName = types.StringValue(login)
 	}
-	if v, ok := apiData["login"]; ok && v != nil {
-		model.Name = types.StringValue(fmt.Sprint(v))
-	}
+	model.Name = types.StringValue(login)
 
 	// admin_logins is not reconciled from the API to avoid requiring org-level
 	// member-read permissions on the enterprise token. The state value is kept.
