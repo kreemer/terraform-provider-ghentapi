@@ -316,8 +316,9 @@ func TestClient_CreateEnterpriseOrg_NoDisplayName(t *testing.T) {
 		t.Fatalf("CreateEnterpriseOrg error: %v", err)
 	}
 
-	// profileName should NOT be present in the mutation input when empty.
-	if _, ok := mutationInput["profileName"]; ok {
-		t.Error("profileName should not be sent when DisplayName is empty")
+	// profileName is required by the mutation; it should default to the org
+	// login when DisplayName is empty.
+	if mutationInput["profileName"] != "no-name-org" {
+		t.Errorf("expected profileName to default to login %q, got %v", "no-name-org", mutationInput["profileName"])
 	}
 }
