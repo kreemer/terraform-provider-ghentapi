@@ -189,7 +189,7 @@ func TestClient_ResolveEnterpriseSlug_UsesAppJWTNotInstallationToken(t *testing.
 			installationInfoAuthHeader = r.Header.Get("Authorization")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"account": map[string]string{"login": "test-enterprise"},
+				"account": map[string]string{"slug": "test-enterprise"},
 			})
 		default:
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
@@ -230,7 +230,7 @@ func TestClient_DoWithOrgAuth_InjectsHeader(t *testing.T) {
 			// Enterprise installation info — returns the enterprise slug.
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"account": map[string]string{"login": "test-enterprise"},
+				"account": map[string]string{"slug": "test-enterprise"},
 			})
 		case "/enterprises/test-enterprise/apps/organizations/my-org/installations":
 			// List org installations — return our org app installation.
@@ -276,7 +276,7 @@ func TestClient_EnsureOrgInstallation_AutoInstall(t *testing.T) {
 		case "/app/installations/ent-install-id":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"account": map[string]string{"login": "test-enterprise"},
+				"account": map[string]string{"slug": "test-enterprise"},
 			})
 		case "/enterprises/test-enterprise/apps/organizations/new-org/installations":
 			switch r.Method {
@@ -315,7 +315,7 @@ func TestClient_EnsureOrgInstallation_NoAutoInstall_Error(t *testing.T) {
 		case "/app/installations/ent-install-id":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"account": map[string]string{"login": "test-enterprise"},
+				"account": map[string]string{"slug": "test-enterprise"},
 			})
 		case "/enterprises/test-enterprise/apps/organizations/uninstalled-org/installations":
 			w.WriteHeader(http.StatusOK)

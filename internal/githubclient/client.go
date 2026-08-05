@@ -123,18 +123,18 @@ func (c *Client) resolveEnterpriseSlug(ctx context.Context) (string, error) {
 
 		var result struct {
 			Account struct {
-				Login string `json:"login"`
+				Slug string `json:"slug"`
 			} `json:"account"`
 		}
 		if err := json.Unmarshal(body, &result); err != nil {
 			c.enterpriseSlugErr = fmt.Errorf("decoding enterprise installation response: %w", err)
 			return
 		}
-		if result.Account.Login == "" {
-			c.enterpriseSlugErr = fmt.Errorf("enterprise installation response missing account.login")
+		if result.Account.Slug == "" {
+			c.enterpriseSlugErr = fmt.Errorf("enterprise installation response missing account.slug")
 			return
 		}
-		c.enterpriseSlug = result.Account.Login
+		c.enterpriseSlug = result.Account.Slug
 	})
 	return c.enterpriseSlug, c.enterpriseSlugErr
 }

@@ -72,7 +72,7 @@ func newMockGitHubServer(t *testing.T) (*httptest.Server, *orgState) {
 		case "/app/installations/ent-install-id":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"account": map[string]string{"login": "test-enterprise"},
+				"account": map[string]string{"slug": "test-enterprise"},
 			})
 
 		case "/enterprises/test-enterprise/apps/organizations/my-org/installations":

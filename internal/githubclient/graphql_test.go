@@ -165,7 +165,7 @@ func TestClient_resolveEnterpriseNodeID(t *testing.T) {
 	mux.HandleFunc("/api/v3/app/installations/ent-install-id", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"account": map[string]string{"login": "test-enterprise"},
+			"account": map[string]string{"slug": "test-enterprise"},
 		})
 	})
 	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, _ *http.Request) {
@@ -210,7 +210,7 @@ func TestClient_CreateEnterpriseOrg(t *testing.T) {
 	mux.HandleFunc("/api/v3/app/installations/ent-install-id", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"account": map[string]string{"login": "test-enterprise"},
+			"account": map[string]string{"slug": "test-enterprise"},
 		})
 	})
 	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +283,7 @@ func TestClient_CreateEnterpriseOrg_NoDisplayName(t *testing.T) {
 	mux.HandleFunc("/api/v3/app/installations/ent-install-id", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"account": map[string]string{"login": "test-enterprise"},
+			"account": map[string]string{"slug": "test-enterprise"},
 		})
 	})
 	mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, r *http.Request) {
