@@ -97,10 +97,14 @@ func (c *Client) orgToken(ctx context.Context, installationID string) (string, e
 
 // resolveEnterpriseSlug fetches the enterprise slug from the enterprise app
 // installation info. The result is cached after the first successful call.
+//
+// GET /app/installations/{installation_id} must be authenticated as the app
+// itself via a JWT — it explicitly rejects installation access tokens — so
+// this uses DoWithEnterpriseAppJWT rather than DoWithEnterpriseAuth.
 func (c *Client) resolveEnterpriseSlug(ctx context.Context) (string, error) {
 	c.enterpriseSlugOnce.Do(func() {
 		path := fmt.Sprintf("/app/installations/%s", c.cfg.EnterpriseAppInstallationID)
-		resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodGet, path, nil)
+		resp, err := c.DoWithEnterpriseAppJWT(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			c.enterpriseSlugErr = fmt.Errorf("fetching enterprise installation info: %w", err)
 			return
@@ -350,6 +354,21 @@ func (c *Client) DoWithEnterpriseAuth(ctx context.Context, method, path string, 
 	}
 	return c.Do(ctx, method, path, body, map[string]string{
 		"Authorization": "token " + tok,
+	})
+}
+
+// DoWithEnterpriseAppJWT executes a request authenticated with the enterprise
+// app's own JWT (signed with its private key), rather than an installation
+// access token. Some endpoints — such as "Get an installation for the
+// authenticated app" — explicitly require app-level JWT authentication and
+// reject installation access tokens.
+func (c *Client) DoWithEnterpriseAppJWT(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+	appJWT, err := generateJWT(c.cfg.EnterpriseAppID, c.cfg.EnterpriseAppPEM)
+	if err != nil {
+		return nil, fmt.Errorf("generating enterprise app JWT: %w", err)
+	}
+	return c.Do(ctx, method, path, body, map[string]string{
+		"Authorization": "Bearer " + appJWT,
 	})
 }
 
