@@ -61,7 +61,7 @@ func newEnterpriseOrgMockServer(t *testing.T) (*httptest.Server, *mockOrgServerS
 		case r.URL.Path == "/app/installations/ent-install-id":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"account": map[string]string{"login": "test-enterprise"},
+				"account": map[string]string{"slug": "test-enterprise"},
 			})
 
 		// ── org-app installation token (dynamic per install ID) ────────────
