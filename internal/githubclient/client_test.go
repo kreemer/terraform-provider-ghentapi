@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,6 +168,49 @@ func TestClient_DoWithEnterpriseAuth_InjectsHeader(t *testing.T) {
 
 	if authHeader != "token ent-token-xyz" {
 		t.Errorf("expected Authorization: token ent-token-xyz, got %q", authHeader)
+	}
+}
+
+func TestClient_ResolveEnterpriseSlug_UsesAppJWTNotInstallationToken(t *testing.T) {
+	var installationInfoAuthHeader string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/ent-install-id/access_tokens":
+			// If resolveEnterpriseSlug ever exchanges for an installation
+			// token, that would indicate the regression this test guards
+			// against — the endpoint below must be called with the raw JWT.
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"token":      "ent-token-xyz",
+				"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
+			})
+		case "/app/installations/ent-install-id":
+			installationInfoAuthHeader = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"account": map[string]string{"login": "test-enterprise"},
+			})
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	slug, err := c.resolveEnterpriseSlug(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if slug != "test-enterprise" {
+		t.Errorf("expected slug %q, got %q", "test-enterprise", slug)
+	}
+
+	if !strings.HasPrefix(installationInfoAuthHeader, "Bearer ") {
+		t.Fatalf("expected Authorization header to be a Bearer JWT, got %q", installationInfoAuthHeader)
+	}
+	if installationInfoAuthHeader == "Bearer " {
+		t.Fatal("expected a non-empty JWT after Bearer prefix")
 	}
 }
 
