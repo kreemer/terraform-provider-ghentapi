@@ -545,9 +545,13 @@ mutation CreateOrg($input: CreateEnterpriseOrganizationInput!) {
 		"billingEmail": input.BillingEmail,
 		"adminLogins":  input.AdminLogins,
 	}
-	if input.DisplayName != "" {
-		inputVars["profileName"] = input.DisplayName
+	// profileName is required by the createEnterpriseOrganization mutation;
+	// default it to the org login when no display name was provided.
+	profileName := input.DisplayName
+	if profileName == "" {
+		profileName = input.Login
 	}
+	inputVars["profileName"] = profileName
 
 	data, err := c.DoGraphQL(ctx, mutation, map[string]any{"input": inputVars})
 	if err != nil {

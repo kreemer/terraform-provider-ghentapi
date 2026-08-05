@@ -320,7 +320,10 @@ resource "ghentapi_enterprise_org" "test" {
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr("ghentapi_enterprise_org.test", "name", "minimal-org"),
 					resource.TestCheckResourceAttr("ghentapi_enterprise_org.test", "billing_email", "minimal@example.com"),
-					resource.TestCheckResourceAttr("ghentapi_enterprise_org.test", "display_name", ""),
+					// profileName is required by the GraphQL API; when
+					// display_name is not set it defaults server-side to the
+					// org login.
+					resource.TestCheckResourceAttr("ghentapi_enterprise_org.test", "display_name", "minimal-org"),
 				),
 			},
 		},
