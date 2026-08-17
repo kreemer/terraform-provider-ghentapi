@@ -341,3 +341,224 @@ func TestClient_EnsureOrgInstallation_NoAutoInstall_Error(t *testing.T) {
 		t.Fatal("expected error when auto_install=false and app not installed, got nil")
 	}
 }
+
+// enterpriseSlugHandlers returns the two mock endpoints needed to resolve the
+// enterprise slug ("test-enterprise") in tests below.
+func enterpriseSlugHandlers(mux *http.ServeMux) {
+	mux.HandleFunc("/app/installations/ent-install-id/access_tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"token":      "ent-token-xyz",
+			"expires_at": time.Now().Add(60 * time.Minute).UTC().Format(time.RFC3339),
+		})
+	})
+	mux.HandleFunc("/app/installations/ent-install-id", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"account": map[string]string{"slug": "test-enterprise"},
+		})
+	})
+}
+
+func TestClient_InstallGitHubApp_All(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                   123,
+			"app_slug":             "my-app",
+			"client_id":            "Iv2abc123",
+			"repository_selection": "all",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	installation, err := c.InstallGitHubApp(context.Background(), "my-org", "Iv2abc123", "all", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if installation.ID != "123" {
+		t.Errorf("expected installation ID 123, got %q", installation.ID)
+	}
+	if installation.AppSlug != "my-app" {
+		t.Errorf("expected app slug my-app, got %q", installation.AppSlug)
+	}
+	if installation.RepositorySelection != "all" {
+		t.Errorf("expected repository_selection all, got %q", installation.RepositorySelection)
+	}
+	if gotBody["repositories"] != nil {
+		t.Errorf("expected no repositories field to be sent for \"all\", got %v", gotBody["repositories"])
+	}
+	if gotBody["client_id"] != "Iv2abc123" {
+		t.Errorf("expected client_id Iv2abc123 to be sent, got %v", gotBody["client_id"])
+	}
+}
+
+func TestClient_InstallGitHubApp_SelectedRepositories(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                   124,
+			"app_slug":             "my-app",
+			"client_id":            "Iv2abc123",
+			"repository_selection": "selected",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	installation, err := c.InstallGitHubApp(context.Background(), "my-org", "Iv2abc123", "selected", []string{"repo-a", "repo-b"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if installation.RepositorySelection != "selected" {
+		t.Errorf("expected repository_selection selected, got %q", installation.RepositorySelection)
+	}
+	repos, ok := gotBody["repositories"].([]interface{})
+	if !ok || len(repos) != 2 {
+		t.Fatalf("expected repositories [repo-a repo-b] to be sent, got %v", gotBody["repositories"])
+	}
+}
+
+func TestClient_FindGitHubAppInstallation_Found(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+			{"id": 55, "client_id": "other-client", "app_slug": "other-app", "repository_selection": "all"},
+			{"id": 56, "client_id": "Iv2abc123", "app_slug": "my-app", "repository_selection": "selected"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	installation, ok, err := c.FindGitHubAppInstallation(context.Background(), "my-org", "Iv2abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected installation to be found")
+	}
+	if installation.ID != "56" || installation.AppSlug != "my-app" {
+		t.Errorf("unexpected installation: %+v", installation)
+	}
+}
+
+func TestClient_FindGitHubAppInstallation_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "[]")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, ok, err := c.FindGitHubAppInstallation(context.Background(), "my-org", "Iv2abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected installation to not be found")
+	}
+}
+
+func TestClient_FindGitHubAppInstallation_WrapperFormat(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"installations": []map[string]interface{}{
+				{"id": 77, "client_id": "Iv2abc123", "app_slug": "my-app", "repository_selection": "none"},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	installation, ok, err := c.FindGitHubAppInstallation(context.Background(), "my-org", "Iv2abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok || installation.ID != "77" {
+		t.Fatalf("expected installation 77 to be found via wrapper format, got ok=%v installation=%+v", ok, installation)
+	}
+}
+
+func TestClient_UninstallGitHubApp_Success(t *testing.T) {
+	var gotMethod, gotPath string
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations/56", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.UninstallGitHubApp(context.Background(), "my-org", "56"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE, got %s", gotMethod)
+	}
+	if gotPath != "/enterprises/test-enterprise/apps/organizations/my-org/installations/56" {
+		t.Errorf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestClient_UninstallGitHubApp_NotFoundTreatedAsSuccess(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations/56", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.UninstallGitHubApp(context.Background(), "my-org", "56"); err != nil {
+		t.Fatalf("expected 404 to be treated as success, got error: %v", err)
+	}
+}
+
+func TestClient_UninstallGitHubApp_ServerError(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/apps/organizations/my-org/installations/56", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"message":"forbidden"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	c.httpClient.Timeout = 5 * time.Second
+	if err := c.UninstallGitHubApp(context.Background(), "my-org", "56"); err == nil {
+		t.Fatal("expected error on 403 response, got nil")
+	}
+}
