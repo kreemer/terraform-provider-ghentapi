@@ -504,7 +504,24 @@ func (c *Client) DoGraphQL(ctx context.Context, query string, variables map[stri
 	if err != nil {
 		return nil, fmt.Errorf("obtaining enterprise token for GraphQL: %w", err)
 	}
+	return c.doGraphQLWithToken(ctx, tok, query, variables)
+}
 
+// DoGraphQLWithOrgAuth executes a GraphQL query or mutation authenticated as
+// the org-level GitHub App installed in the given organisation. The org app
+// installation is resolved/installed automatically via EnsureOrgInstallation.
+func (c *Client) DoGraphQLWithOrgAuth(ctx context.Context, org, query string, variables map[string]any) (json.RawMessage, error) {
+	tok, err := c.OrgToken(ctx, org)
+	if err != nil {
+		return nil, fmt.Errorf("obtaining org token for %q for GraphQL: %w", org, err)
+	}
+	return c.doGraphQLWithToken(ctx, tok, query, variables)
+}
+
+// doGraphQLWithToken executes a GraphQL query or mutation using the given
+// bearer token. Retries are performed for HTTP 429 and 5xx responses (same
+// policy as Do).
+func (c *Client) doGraphQLWithToken(ctx context.Context, tok string, query string, variables map[string]any) (json.RawMessage, error) {
 	payload := map[string]any{"query": query, "variables": variables}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {

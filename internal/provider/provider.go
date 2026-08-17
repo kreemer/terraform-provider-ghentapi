@@ -154,6 +154,7 @@ func (p *GhentapiProvider) Resources(ctx context.Context) []func() resource.Reso
 func (p *GhentapiProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewInstallationTokenDataSource,
+		NewOrganizationMembersDataSource,
 	}
 }
 
