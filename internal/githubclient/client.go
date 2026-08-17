@@ -195,28 +195,30 @@ type orgInstallation struct {
 	Account struct {
 		Login string `json:"login"`
 	} `json:"account"`
-	ClientID string `json:"client_id"`
+	ClientID            string `json:"client_id"`
+	RepositorySelection string `json:"repository_selection"`
 }
 
-// findOrgInstallation searches the enterprise API for an existing installation
-// of our org app in the given organisation. Returns "" if not found.
-func (c *Client) findOrgInstallation(ctx context.Context, enterpriseSlug, org string) (string, error) {
+// listOrgInstallations fetches all GitHub App installations for the given
+// organisation via the enterprise API. Returns an empty slice (not an error)
+// when the API responds with 404.
+func (c *Client) listOrgInstallations(ctx context.Context, enterpriseSlug, org string) ([]orgInstallation, error) {
 	path := fmt.Sprintf("/enterprises/%s/apps/organizations/%s/installations", enterpriseSlug, org)
 	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return "", fmt.Errorf("listing org installations: %w", err)
+		return nil, fmt.Errorf("listing org installations: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading org installations response: %w", err)
+		return nil, fmt.Errorf("reading org installations response: %w", err)
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return "", nil
+		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("listing org installations failed (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("listing org installations failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var installations []orgInstallation
@@ -226,11 +228,20 @@ func (c *Client) findOrgInstallation(ctx context.Context, enterpriseSlug, org st
 			Installations []orgInstallation `json:"installations"`
 		}
 		if err2 := json.Unmarshal(body, &wrapper); err2 != nil {
-			return "", fmt.Errorf("decoding org installations: %w", err)
+			return nil, fmt.Errorf("decoding org installations: %w", err)
 		}
 		installations = wrapper.Installations
 	}
+	return installations, nil
+}
 
+// findOrgInstallation searches the enterprise API for an existing installation
+// of our org app in the given organisation. Returns "" if not found.
+func (c *Client) findOrgInstallation(ctx context.Context, enterpriseSlug, org string) (string, error) {
+	installations, err := c.listOrgInstallations(ctx, enterpriseSlug, org)
+	if err != nil {
+		return "", err
+	}
 	for _, inst := range installations {
 		if inst.ClientID == c.cfg.OrgAppClientID {
 			return fmt.Sprintf("%d", inst.ID), nil
@@ -241,32 +252,124 @@ func (c *Client) findOrgInstallation(ctx context.Context, enterpriseSlug, org st
 
 // installOrgApp calls the enterprise API to install the org app into the org.
 func (c *Client) installOrgApp(ctx context.Context, enterpriseSlug, org string) (string, error) {
+	installation, err := c.installApp(ctx, enterpriseSlug, org, c.cfg.OrgAppClientID, c.cfg.RepositorySelection, nil)
+	if err != nil {
+		return "", err
+	}
+	return installation.ID, nil
+}
+
+// AppInstallation describes a GitHub App installation on an organisation.
+type AppInstallation struct {
+	ID                  string
+	AppSlug             string
+	ClientID            string
+	RepositorySelection string
+}
+
+// InstallGitHubApp installs the GitHub App identified by clientID into org,
+// authenticating with the enterprise app token. repositorySelection must be
+// "all", "selected", or "none". repositories is only sent (and only
+// meaningful) when repositorySelection is "selected". Calling this again for
+// an already-installed app updates its repository selection, per GitHub's
+// API semantics.
+func (c *Client) InstallGitHubApp(ctx context.Context, org, clientID, repositorySelection string, repositories []string) (AppInstallation, error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return AppInstallation{}, err
+	}
+	return c.installApp(ctx, slug, org, clientID, repositorySelection, repositories)
+}
+
+// installApp performs the actual install/update API call.
+func (c *Client) installApp(ctx context.Context, enterpriseSlug, org, clientID, repositorySelection string, repositories []string) (AppInstallation, error) {
 	path := fmt.Sprintf("/enterprises/%s/apps/organizations/%s/installations", enterpriseSlug, org)
-	payload := map[string]string{
-		"client_id":            c.cfg.OrgAppClientID,
-		"repository_selection": c.cfg.RepositorySelection,
+	payload := map[string]interface{}{
+		"client_id":            clientID,
+		"repository_selection": repositorySelection,
+	}
+	if len(repositories) > 0 {
+		payload["repositories"] = repositories
 	}
 	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPost, path, payload)
 	if err != nil {
-		return "", fmt.Errorf("installing org app: %w", err)
+		return AppInstallation{}, fmt.Errorf("installing github app: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading install response: %w", err)
+		return AppInstallation{}, fmt.Errorf("reading install response: %w", err)
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("installing org app failed (status %d): %s", resp.StatusCode, string(body))
+		return AppInstallation{}, fmt.Errorf("installing github app failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
-		ID int64 `json:"id"`
+		ID                  int64  `json:"id"`
+		AppSlug             string `json:"app_slug"`
+		ClientID            string `json:"client_id"`
+		RepositorySelection string `json:"repository_selection"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("decoding install response: %w", err)
+		return AppInstallation{}, fmt.Errorf("decoding install response: %w", err)
 	}
-	return fmt.Sprintf("%d", result.ID), nil
+	return AppInstallation{
+		ID:                  fmt.Sprintf("%d", result.ID),
+		AppSlug:             result.AppSlug,
+		ClientID:            result.ClientID,
+		RepositorySelection: result.RepositorySelection,
+	}, nil
+}
+
+// FindGitHubAppInstallation searches the given organisation for an existing
+// installation of the app identified by clientID. ok is false when no such
+// installation exists.
+func (c *Client) FindGitHubAppInstallation(ctx context.Context, org, clientID string) (installation AppInstallation, ok bool, err error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return AppInstallation{}, false, err
+	}
+	installations, err := c.listOrgInstallations(ctx, slug, org)
+	if err != nil {
+		return AppInstallation{}, false, err
+	}
+	for _, inst := range installations {
+		if inst.ClientID == clientID {
+			return AppInstallation{
+				ID:                  fmt.Sprintf("%d", inst.ID),
+				AppSlug:             inst.AppSlug,
+				ClientID:            inst.ClientID,
+				RepositorySelection: inst.RepositorySelection,
+			}, true, nil
+		}
+	}
+	return AppInstallation{}, false, nil
+}
+
+// UninstallGitHubApp removes the given installation from the organisation. A
+// 404 response is treated as success, since the installation is already gone.
+func (c *Client) UninstallGitHubApp(ctx context.Context, org, installationID string) error {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/enterprises/%s/apps/organizations/%s/installations/%s", slug, org, installationID)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("uninstalling github app: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading uninstall response: %w", err)
+	}
+	return fmt.Errorf("uninstalling github app failed (status %d): %s", resp.StatusCode, string(body))
 }
 
 // OrgToken returns a valid installation token for the given org. It calls
