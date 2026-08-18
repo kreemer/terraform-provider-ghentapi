@@ -24,6 +24,7 @@ func newTestClient(baseURL string) *Client {
 		EnterpriseAppID:             "ent-app-id",
 		EnterpriseAppInstallationID: "ent-install-id",
 		EnterpriseAppPEM:            []byte(testRSAKey),
+		EnterpriseFineGrainedToken:  "ent-fine-grained-pat",
 		OrgAppID:                    "org-app-id",
 		OrgAppClientID:              "org-client-id",
 		OrgAppPEM:                   []byte(testRSAKey),
@@ -168,6 +169,44 @@ func TestClient_DoWithEnterpriseAuth_InjectsHeader(t *testing.T) {
 
 	if authHeader != "token ent-token-xyz" {
 		t.Errorf("expected Authorization: token ent-token-xyz, got %q", authHeader)
+	}
+}
+
+func TestClient_DoWithEnterpriseFineGrainedAuth_InjectsHeader(t *testing.T) {
+	var authHeader string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	resp, err := c.DoWithEnterpriseFineGrainedAuth(context.Background(), http.MethodGet, "/some/api", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if authHeader != "Bearer ent-fine-grained-pat" {
+		t.Errorf("expected Authorization: Bearer ent-fine-grained-pat, got %q", authHeader)
+	}
+}
+
+func TestClient_DoWithEnterpriseFineGrainedAuth_ErrorsWhenTokenUnset(t *testing.T) {
+	c := NewClient(ClientConfig{
+		BaseURL:                     "http://example.invalid",
+		EnterpriseAppID:             "ent-app-id",
+		EnterpriseAppInstallationID: "ent-install-id",
+		EnterpriseAppPEM:            []byte(testRSAKey),
+	})
+
+	_, err := c.DoWithEnterpriseFineGrainedAuth(context.Background(), http.MethodGet, "/some/api", nil)
+	if err == nil {
+		t.Fatal("expected error when enterprise_fine_grained_token is unset, got nil")
+	}
+	if !strings.Contains(err.Error(), "enterprise_fine_grained_token") {
+		t.Errorf("expected error to mention enterprise_fine_grained_token, got: %v", err)
 	}
 }
 

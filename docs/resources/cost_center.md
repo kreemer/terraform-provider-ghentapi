@@ -3,18 +3,21 @@
 page_title: "ghentapi_cost_center Resource - ghentapi"
 subcategory: ""
 description: |-
-  Creates and manages a GitHub Enterprise billing cost center, authenticated with the enterprise-level GitHub App. Cost centers group users, organizations, repositories, and enterprise teams together so their usage is billed against a shared budget.
+  Creates and manages a GitHub Enterprise billing cost center. Cost centers group users, organizations, repositories, and enterprise teams together so their usage is billed against a shared budget.
   Import: terraform import ghentapi_cost_center.example COST_CENTER_ID.
   **Note:** GitHub provides no way to permanently delete a cost center. `terraform destroy` calls the archive API, which sets the cost center's `state` to `deleted`; the cost center still exists on GitHub in an archived state.
+  **Note:** The cost center billing API does not support GitHub App authentication. The `enterprise_fine_grained_token` provider attribute must be set to a fine-grained (or classic) personal access token for this resource to work.
 ---
 
 # ghentapi_cost_center (Resource)
 
-Creates and manages a GitHub Enterprise billing cost center, authenticated with the enterprise-level GitHub App. Cost centers group users, organizations, repositories, and enterprise teams together so their usage is billed against a shared budget.
+Creates and manages a GitHub Enterprise billing cost center. Cost centers group users, organizations, repositories, and enterprise teams together so their usage is billed against a shared budget.
 
 **Import:** `terraform import ghentapi_cost_center.example COST_CENTER_ID`.
 
 > **Note:** GitHub provides no way to permanently delete a cost center. `terraform destroy` calls the archive API, which sets the cost center's `state` to `deleted`; the cost center still exists on GitHub in an archived state.
+
+> **Note:** The cost center billing API does not support GitHub App authentication. The `enterprise_fine_grained_token` provider attribute must be set to a fine-grained (or classic) personal access token for this resource to work.
 
 ## Example Usage
 

@@ -22,6 +22,10 @@ provider "ghentapi" {
   # Automatically installs the org app into new organisations on first use.
   auto_install_org_app = true
   repository_selection = "all"
+
+  # Required only for resources whose GitHub API endpoints don't support
+  # GitHub App authentication (e.g. ghentapi_cost_center).
+  enterprise_fine_grained_token = var.ent_fine_grained_token
 }
 
 variable "ent_app_id" {
@@ -46,6 +50,11 @@ variable "org_app_client_id" {
 }
 
 variable "org_pem" {
+  type      = string
+  sensitive = true
+}
+
+variable "ent_fine_grained_token" {
   type      = string
   sensitive = true
 }
