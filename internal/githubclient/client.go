@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -942,6 +943,190 @@ func (c *Client) RemoveCostCenterResources(ctx context.Context, costCenterID str
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("removing cost center resources failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// EnterpriseTeam is a GitHub Enterprise Team, managed via
+// /enterprises/{enterprise}/teams. Team membership is intentionally not
+// modeled here; this provider only manages the team itself.
+type EnterpriseTeam struct {
+	ID                        string
+	Name                      string
+	Description               string
+	Slug                      string
+	OrganizationSelectionType string
+	GroupID                   string
+	NotificationSetting       string
+}
+
+// enterpriseTeamAPIResponse mirrors the JSON shape returned by the
+// enterprise team create/get/update endpoints.
+type enterpriseTeamAPIResponse struct {
+	ID                        int64  `json:"id"`
+	Name                      string `json:"name"`
+	Description               string `json:"description"`
+	Slug                      string `json:"slug"`
+	OrganizationSelectionType string `json:"organization_selection_type"`
+	GroupID                   string `json:"group_id"`
+	NotificationSetting       string `json:"notification_setting"`
+}
+
+func (r enterpriseTeamAPIResponse) toEnterpriseTeam() EnterpriseTeam {
+	return EnterpriseTeam{
+		ID:                        strconv.FormatInt(r.ID, 10),
+		Name:                      r.Name,
+		Description:               r.Description,
+		Slug:                      r.Slug,
+		OrganizationSelectionType: r.OrganizationSelectionType,
+		GroupID:                   r.GroupID,
+		NotificationSetting:       r.NotificationSetting,
+	}
+}
+
+// EnterpriseTeamInput holds the fields accepted by the create/update
+// enterprise team endpoints. Empty strings are omitted from the request
+// payload so GitHub applies its own defaults / leaves fields unchanged.
+type EnterpriseTeamInput struct {
+	Name                      string
+	Description               string
+	OrganizationSelectionType string
+	GroupID                   string
+	NotificationSetting       string
+}
+
+func (i EnterpriseTeamInput) toPayload(includeName bool) map[string]interface{} {
+	payload := map[string]interface{}{}
+	if includeName {
+		payload["name"] = i.Name
+	}
+	if i.Description != "" {
+		payload["description"] = i.Description
+	}
+	if i.OrganizationSelectionType != "" {
+		payload["organization_selection_type"] = i.OrganizationSelectionType
+	}
+	if i.GroupID != "" {
+		payload["group_id"] = i.GroupID
+	}
+	if i.NotificationSetting != "" {
+		payload["notification_setting"] = i.NotificationSetting
+	}
+	return payload
+}
+
+// CreateEnterpriseTeam creates a new enterprise team, authenticated as the
+// enterprise app.
+func (c *Client) CreateEnterpriseTeam(ctx context.Context, input EnterpriseTeamInput) (EnterpriseTeam, error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return EnterpriseTeam{}, err
+	}
+	path := fmt.Sprintf("/enterprises/%s/teams", slug)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPost, path, input.toPayload(true))
+	if err != nil {
+		return EnterpriseTeam{}, fmt.Errorf("creating enterprise team: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return EnterpriseTeam{}, fmt.Errorf("reading create enterprise team response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return EnterpriseTeam{}, fmt.Errorf("creating enterprise team failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result enterpriseTeamAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return EnterpriseTeam{}, fmt.Errorf("decoding create enterprise team response: %w", err)
+	}
+	return result.toEnterpriseTeam(), nil
+}
+
+// GetEnterpriseTeam fetches an enterprise team by its slug. ok is false when
+// the team does not exist (HTTP 404).
+func (c *Client) GetEnterpriseTeam(ctx context.Context, teamSlug string) (team EnterpriseTeam, ok bool, err error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return EnterpriseTeam{}, false, err
+	}
+	path := fmt.Sprintf("/enterprises/%s/teams/%s", slug, teamSlug)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return EnterpriseTeam{}, false, fmt.Errorf("getting enterprise team: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return EnterpriseTeam{}, false, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return EnterpriseTeam{}, false, fmt.Errorf("reading get enterprise team response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return EnterpriseTeam{}, false, fmt.Errorf("getting enterprise team failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result enterpriseTeamAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return EnterpriseTeam{}, false, fmt.Errorf("decoding get enterprise team response: %w", err)
+	}
+	return result.toEnterpriseTeam(), true, nil
+}
+
+// UpdateEnterpriseTeam updates an existing enterprise team identified by its
+// current slug. Renaming a team changes its slug; the new slug is returned
+// in the result.
+func (c *Client) UpdateEnterpriseTeam(ctx context.Context, teamSlug string, input EnterpriseTeamInput) (EnterpriseTeam, error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return EnterpriseTeam{}, err
+	}
+	path := fmt.Sprintf("/enterprises/%s/teams/%s", slug, teamSlug)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPatch, path, input.toPayload(input.Name != ""))
+	if err != nil {
+		return EnterpriseTeam{}, fmt.Errorf("updating enterprise team: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return EnterpriseTeam{}, fmt.Errorf("reading update enterprise team response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return EnterpriseTeam{}, fmt.Errorf("updating enterprise team failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result enterpriseTeamAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return EnterpriseTeam{}, fmt.Errorf("decoding update enterprise team response: %w", err)
+	}
+	return result.toEnterpriseTeam(), nil
+}
+
+// DeleteEnterpriseTeam deletes an enterprise team by its slug. A 404
+// response is treated as success, since the team is already gone.
+func (c *Client) DeleteEnterpriseTeam(ctx context.Context, teamSlug string) error {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/enterprises/%s/teams/%s", slug, teamSlug)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("deleting enterprise team: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("deleting enterprise team failed (status %d): %s", resp.StatusCode, string(body))
 	}
 	return nil
 }
