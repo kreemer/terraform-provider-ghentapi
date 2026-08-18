@@ -837,3 +837,172 @@ func TestClient_RemoveCostCenterResources_EmptyIsNoop(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestClient_CreateEnterpriseTeam(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/teams", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                          1,
+			"name":                        "Justice League",
+			"description":                 "A great team.",
+			"slug":                        "ent:justice-league",
+			"organization_selection_type": "disabled",
+			"group_id":                    nil,
+			"notification_setting":        "notifications_enabled",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	team, err := c.CreateEnterpriseTeam(context.Background(), EnterpriseTeamInput{
+		Name:        "Justice League",
+		Description: "A great team.",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if team.ID != "1" || team.Slug != "ent:justice-league" || team.Name != "Justice League" {
+		t.Errorf("unexpected enterprise team: %+v", team)
+	}
+	if gotBody["name"] != "Justice League" {
+		t.Errorf("expected name to be sent, got %v", gotBody["name"])
+	}
+	if gotBody["description"] != "A great team." {
+		t.Errorf("expected description to be sent, got %v", gotBody["description"])
+	}
+}
+
+func TestClient_GetEnterpriseTeam_Found(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/teams/ent:justice-league", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                          1,
+			"name":                        "Justice League",
+			"description":                 "A great team.",
+			"slug":                        "ent:justice-league",
+			"organization_selection_type": "all",
+			"notification_setting":        "notifications_disabled",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	team, ok, err := c.GetEnterpriseTeam(context.Background(), "ent:justice-league")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected enterprise team to be found")
+	}
+	if team.OrganizationSelectionType != "all" {
+		t.Errorf("expected organization_selection_type all, got %q", team.OrganizationSelectionType)
+	}
+	if team.NotificationSetting != "notifications_disabled" {
+		t.Errorf("expected notification_setting notifications_disabled, got %q", team.NotificationSetting)
+	}
+}
+
+func TestClient_GetEnterpriseTeam_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/teams/missing", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, ok, err := c.GetEnterpriseTeam(context.Background(), "missing")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected enterprise team to not be found")
+	}
+}
+
+func TestClient_UpdateEnterpriseTeam(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/teams/ent:justice-league", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                          1,
+			"name":                        "Renamed Team",
+			"description":                 "A great team.",
+			"slug":                        "ent:renamed-team",
+			"organization_selection_type": "disabled",
+			"notification_setting":        "notifications_enabled",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	team, err := c.UpdateEnterpriseTeam(context.Background(), "ent:justice-league", EnterpriseTeamInput{
+		Name: "Renamed Team",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if team.Slug != "ent:renamed-team" {
+		t.Errorf("expected new slug ent:renamed-team, got %q", team.Slug)
+	}
+	if gotBody["name"] != "Renamed Team" {
+		t.Errorf("expected name to be sent in patch body, got %v", gotBody["name"])
+	}
+}
+
+func TestClient_DeleteEnterpriseTeam_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/teams/ent:justice-league", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.DeleteEnterpriseTeam(context.Background(), "ent:justice-league"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_DeleteEnterpriseTeam_NotFoundTreatedAsSuccess(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/teams/ent:justice-league", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.DeleteEnterpriseTeam(context.Background(), "ent:justice-league"); err != nil {
+		t.Fatalf("expected 404 to be treated as success, got error: %v", err)
+	}
+}
