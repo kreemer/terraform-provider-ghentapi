@@ -36,6 +36,7 @@ type GhentapiProviderModel struct {
 	OrgAppPemFile               types.String `tfsdk:"org_app_pem_file"`
 	AutoInstallOrgApp           types.Bool   `tfsdk:"auto_install_org_app"`
 	RepositorySelection         types.String `tfsdk:"repository_selection"`
+	EnterpriseFineGrainedToken  types.String `tfsdk:"enterprise_fine_grained_token"`
 }
 
 func (p *GhentapiProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -85,6 +86,16 @@ func (p *GhentapiProvider) Schema(ctx context.Context, req provider.SchemaReques
 				MarkdownDescription: "Repository selection used when auto-installing the org app. Must be `all` or `selected`. Defaults to `all`.",
 				Optional:            true,
 			},
+			"enterprise_fine_grained_token": schema.StringAttribute{
+				MarkdownDescription: "Fine-grained (or classic) personal access token for the enterprise. " +
+					"Some enterprise-level endpoints — such as the cost center billing API used by " +
+					"`ghentapi_cost_center` — do not support GitHub App authentication and require a PAT " +
+					"instead. Optional; only required if you use resources that need it. The provider " +
+					"automatically selects the correct credential per endpoint, so GitHub App credentials " +
+					"and this token can both be configured at the same time.",
+				Optional:  true,
+				Sensitive: true,
+			},
 		},
 	}
 }
@@ -119,6 +130,7 @@ func (p *GhentapiProvider) Configure(ctx context.Context, req provider.Configure
 		EnterpriseAppID:             data.EnterpriseAppID.ValueString(),
 		EnterpriseAppInstallationID: data.EnterpriseAppInstallationID.ValueString(),
 		EnterpriseAppPEM:            entPEM,
+		EnterpriseFineGrainedToken:  data.EnterpriseFineGrainedToken.ValueString(),
 		OrgAppID:                    data.OrgAppID.ValueString(),
 		OrgAppClientID:              data.OrgAppClientID.ValueString(),
 		OrgAppPEM:                   orgPEM,

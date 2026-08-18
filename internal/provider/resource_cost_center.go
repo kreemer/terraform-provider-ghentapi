@@ -40,7 +40,8 @@ func NewCostCenterResource() resource.Resource {
 }
 
 // CostCenterResource manages an enterprise billing cost center, authenticated
-// with the enterprise-level GitHub App.
+// with the enterprise fine-grained personal access token (the cost center
+// billing API does not support GitHub App authentication).
 type CostCenterResource struct {
 	client *githubclient.Client
 }
@@ -63,13 +64,16 @@ func (r *CostCenterResource) Metadata(_ context.Context, req resource.MetadataRe
 
 func (r *CostCenterResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Creates and manages a GitHub Enterprise billing cost center, authenticated with the " +
-			"enterprise-level GitHub App. Cost centers group users, organizations, repositories, and enterprise " +
-			"teams together so their usage is billed against a shared budget.\n\n" +
+		MarkdownDescription: "Creates and manages a GitHub Enterprise billing cost center. Cost centers group " +
+			"users, organizations, repositories, and enterprise teams together so their usage is billed " +
+			"against a shared budget.\n\n" +
 			"**Import:** `terraform import ghentapi_cost_center.example COST_CENTER_ID`.\n\n" +
 			"> **Note:** GitHub provides no way to permanently delete a cost center. `terraform destroy` calls " +
 			"the archive API, which sets the cost center's `state` to `deleted`; the cost center still exists " +
-			"on GitHub in an archived state.",
+			"on GitHub in an archived state.\n\n" +
+			"> **Note:** The cost center billing API does not support GitHub App authentication. The " +
+			"`enterprise_fine_grained_token` provider attribute must be set to a fine-grained (or classic) " +
+			"personal access token for this resource to work.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
