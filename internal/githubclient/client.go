@@ -693,3 +693,255 @@ mutation CreateOrg($input: CreateEnterpriseOrganizationInput!) {
 	org := result.CreateEnterpriseOrganization.Organization
 	return EnterpriseOrgResult{NodeID: org.ID, Login: org.Login}, nil
 }
+
+// CostCenterResource describes a single resource (user, organization,
+// repository, or enterprise team) assigned to a cost center.
+type CostCenterResource struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
+// CostCenterAICreditPoolState describes the AI credit pool cap for a cost
+// center, when ai_credit_pool_enabled is true.
+type CostCenterAICreditPoolState struct {
+	TargetAmount  *float64 `json:"target_amount"`
+	CurrentAmount *float64 `json:"current_amount"`
+}
+
+// CostCenter is the enterprise billing cost center resource.
+type CostCenter struct {
+	ID                  string
+	Name                string
+	State               string
+	AzureSubscription   *string
+	AICreditPoolEnabled bool
+	AICreditPoolState   *CostCenterAICreditPoolState
+	Resources           []CostCenterResource
+}
+
+// costCenterAPIResponse mirrors the JSON shape returned by the cost center
+// create/get/update endpoints.
+type costCenterAPIResponse struct {
+	ID                  string                       `json:"id"`
+	Name                string                       `json:"name"`
+	State               string                       `json:"state"`
+	AzureSubscription   *string                      `json:"azure_subscription"`
+	AICreditPoolEnabled bool                         `json:"ai_credit_pool_enabled"`
+	AICreditPoolState   *CostCenterAICreditPoolState `json:"ai_credit_pool_state"`
+	Resources           []CostCenterResource         `json:"resources"`
+}
+
+func (r costCenterAPIResponse) toCostCenter() CostCenter {
+	return CostCenter(r)
+}
+
+// CostCenterResourceChanges groups resources by type for the add/remove
+// resource endpoints.
+type CostCenterResourceChanges struct {
+	Users           []string
+	Organizations   []string
+	Repositories    []string
+	EnterpriseTeams []string
+}
+
+// isEmpty reports whether all resource slices are empty.
+func (c CostCenterResourceChanges) isEmpty() bool {
+	return len(c.Users) == 0 && len(c.Organizations) == 0 && len(c.Repositories) == 0 && len(c.EnterpriseTeams) == 0
+}
+
+func (c CostCenterResourceChanges) toPayload() map[string]interface{} {
+	payload := map[string]interface{}{}
+	if len(c.Users) > 0 {
+		payload["users"] = c.Users
+	}
+	if len(c.Organizations) > 0 {
+		payload["organizations"] = c.Organizations
+	}
+	if len(c.Repositories) > 0 {
+		payload["repositories"] = c.Repositories
+	}
+	if len(c.EnterpriseTeams) > 0 {
+		payload["enterprise_teams"] = c.EnterpriseTeams
+	}
+	return payload
+}
+
+// CreateCostCenter creates a new enterprise cost center, authenticated as the
+// enterprise app.
+func (c *Client) CreateCostCenter(ctx context.Context, name string, aiCreditPoolEnabled bool) (CostCenter, error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return CostCenter{}, err
+	}
+	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers", slug)
+	payload := map[string]interface{}{
+		"name":                   name,
+		"ai_credit_pool_enabled": aiCreditPoolEnabled,
+	}
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPost, path, payload)
+	if err != nil {
+		return CostCenter{}, fmt.Errorf("creating cost center: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return CostCenter{}, fmt.Errorf("reading create cost center response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return CostCenter{}, fmt.Errorf("creating cost center failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result costCenterAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return CostCenter{}, fmt.Errorf("decoding create cost center response: %w", err)
+	}
+	return result.toCostCenter(), nil
+}
+
+// GetCostCenter fetches a cost center by ID. ok is false when the cost center
+// does not exist (HTTP 404).
+func (c *Client) GetCostCenter(ctx context.Context, costCenterID string) (costCenter CostCenter, ok bool, err error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return CostCenter{}, false, err
+	}
+	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s", slug, costCenterID)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return CostCenter{}, false, fmt.Errorf("getting cost center: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return CostCenter{}, false, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return CostCenter{}, false, fmt.Errorf("reading get cost center response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return CostCenter{}, false, fmt.Errorf("getting cost center failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result costCenterAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return CostCenter{}, false, fmt.Errorf("decoding get cost center response: %w", err)
+	}
+	return result.toCostCenter(), true, nil
+}
+
+// UpdateCostCenter updates the name and/or AI credit pool setting of an
+// existing cost center. Pass nil for fields that should not be changed.
+func (c *Client) UpdateCostCenter(ctx context.Context, costCenterID string, name *string, aiCreditPoolEnabled *bool) (CostCenter, error) {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return CostCenter{}, err
+	}
+	payload := map[string]interface{}{}
+	if name != nil {
+		payload["name"] = *name
+	}
+	if aiCreditPoolEnabled != nil {
+		payload["ai_credit_pool_enabled"] = *aiCreditPoolEnabled
+	}
+
+	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s", slug, costCenterID)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPatch, path, payload)
+	if err != nil {
+		return CostCenter{}, fmt.Errorf("updating cost center: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return CostCenter{}, fmt.Errorf("reading update cost center response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return CostCenter{}, fmt.Errorf("updating cost center failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result costCenterAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return CostCenter{}, fmt.Errorf("decoding update cost center response: %w", err)
+	}
+	return result.toCostCenter(), nil
+}
+
+// DeleteCostCenter archives a cost center. GitHub provides no way to
+// permanently delete a cost center; this sets its state to "deleted". A 404
+// response is treated as success, since the cost center is already gone.
+func (c *Client) DeleteCostCenter(ctx context.Context, costCenterID string) error {
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s", slug, costCenterID)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("deleting cost center: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading delete cost center response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("deleting cost center failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// AddCostCenterResources assigns users, organizations, repositories, and/or
+// enterprise teams to a cost center. Empty changes are a no-op.
+func (c *Client) AddCostCenterResources(ctx context.Context, costCenterID string, changes CostCenterResourceChanges) error {
+	if changes.isEmpty() {
+		return nil
+	}
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s/resource", slug, costCenterID)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPost, path, changes.toPayload())
+	if err != nil {
+		return fmt.Errorf("adding cost center resources: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("adding cost center resources failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// RemoveCostCenterResources unassigns users, organizations, repositories,
+// and/or enterprise teams from a cost center. Empty changes are a no-op.
+func (c *Client) RemoveCostCenterResources(ctx context.Context, costCenterID string, changes CostCenterResourceChanges) error {
+	if changes.isEmpty() {
+		return nil
+	}
+	slug, err := c.resolveEnterpriseSlug(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s/resource", slug, costCenterID)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodDelete, path, changes.toPayload())
+	if err != nil {
+		return fmt.Errorf("removing cost center resources: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("removing cost center resources failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}

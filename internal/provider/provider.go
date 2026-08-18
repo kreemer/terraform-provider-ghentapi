@@ -148,6 +148,7 @@ func (p *GhentapiProvider) Resources(ctx context.Context) []func() resource.Reso
 		NewOrgSettingResource,
 		NewEnterpriseOrgResource,
 		NewGitHubAppInstallationResource,
+		NewCostCenterResource,
 	}
 }
 

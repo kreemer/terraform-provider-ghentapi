@@ -562,3 +562,278 @@ func TestClient_UninstallGitHubApp_ServerError(t *testing.T) {
 		t.Fatal("expected error on 403 response, got nil")
 	}
 }
+
+func TestClient_CreateCostCenter(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                     "cc-1",
+			"name":                   "Engineering",
+			"state":                  "active",
+			"ai_credit_pool_enabled": false,
+			"resources":              []interface{}{},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	cc, err := c.CreateCostCenter(context.Background(), "Engineering", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cc.ID != "cc-1" || cc.Name != "Engineering" || cc.State != "active" {
+		t.Errorf("unexpected cost center: %+v", cc)
+	}
+	if gotBody["name"] != "Engineering" {
+		t.Errorf("expected name Engineering to be sent, got %v", gotBody["name"])
+	}
+	if gotBody["ai_credit_pool_enabled"] != false {
+		t.Errorf("expected ai_credit_pool_enabled false to be sent, got %v", gotBody["ai_credit_pool_enabled"])
+	}
+}
+
+func TestClient_GetCostCenter_Found(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                     "cc-1",
+			"name":                   "Engineering",
+			"state":                  "active",
+			"ai_credit_pool_enabled": true,
+			"resources": []map[string]string{
+				{"type": "User", "name": "monalisa"},
+				{"type": "Organization", "name": "my-org"},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	cc, ok, err := c.GetCostCenter(context.Background(), "cc-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected cost center to be found")
+	}
+	if !cc.AICreditPoolEnabled {
+		t.Errorf("expected AICreditPoolEnabled to be true")
+	}
+	if len(cc.Resources) != 2 {
+		t.Fatalf("expected 2 resources, got %d", len(cc.Resources))
+	}
+}
+
+func TestClient_GetCostCenter_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/missing", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, ok, err := c.GetCostCenter(context.Background(), "missing")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected cost center to not be found")
+	}
+}
+
+func TestClient_UpdateCostCenter(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":                     "cc-1",
+			"name":                   "New Name",
+			"state":                  "active",
+			"ai_credit_pool_enabled": true,
+			"resources":              []interface{}{},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	name := "New Name"
+	aiEnabled := true
+	cc, err := c.UpdateCostCenter(context.Background(), "cc-1", &name, &aiEnabled)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cc.Name != "New Name" {
+		t.Errorf("expected name New Name, got %q", cc.Name)
+	}
+	if gotBody["name"] != "New Name" {
+		t.Errorf("expected name to be sent in patch body, got %v", gotBody["name"])
+	}
+}
+
+func TestClient_DeleteCostCenter_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":         "cost center archived",
+			"id":              "cc-1",
+			"name":            "Engineering",
+			"costCenterState": "CostCenterArchived",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.DeleteCostCenter(context.Background(), "cc-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_DeleteCostCenter_NotFoundTreatedAsSuccess(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.DeleteCostCenter(context.Background(), "cc-1"); err != nil {
+		t.Fatalf("expected 404 to be treated as success, got error: %v", err)
+	}
+}
+
+func TestClient_AddCostCenterResources(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1/resource", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":              "resources added",
+			"reassigned_resources": nil,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	err := c.AddCostCenterResources(context.Background(), "cc-1", CostCenterResourceChanges{
+		Users:         []string{"monalisa"},
+		Organizations: []string{"my-org"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBody["users"] == nil {
+		t.Errorf("expected users to be sent, got %v", gotBody)
+	}
+	if gotBody["organizations"] == nil {
+		t.Errorf("expected organizations to be sent, got %v", gotBody)
+	}
+	if gotBody["repositories"] != nil {
+		t.Errorf("expected no repositories field when empty, got %v", gotBody["repositories"])
+	}
+}
+
+func TestClient_AddCostCenterResources_EmptyIsNoop(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1/resource", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("expected no request to be made for empty changes")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.AddCostCenterResources(context.Background(), "cc-1", CostCenterResourceChanges{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestClient_RemoveCostCenterResources(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1/resource", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "unexpected method "+r.Method, http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "resources removed",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	err := c.RemoveCostCenterResources(context.Background(), "cc-1", CostCenterResourceChanges{
+		Repositories:    []string{"my-repo"},
+		EnterpriseTeams: []string{"platform-team"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBody["repositories"] == nil {
+		t.Errorf("expected repositories to be sent, got %v", gotBody)
+	}
+	if gotBody["enterprise_teams"] == nil {
+		t.Errorf("expected enterprise_teams to be sent, got %v", gotBody)
+	}
+}
+
+func TestClient_RemoveCostCenterResources_EmptyIsNoop(t *testing.T) {
+	mux := http.NewServeMux()
+	enterpriseSlugHandlers(mux)
+	mux.HandleFunc("/enterprises/test-enterprise/settings/billing/cost-centers/cc-1/resource", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("expected no request to be made for empty changes")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	if err := c.RemoveCostCenterResources(context.Background(), "cc-1", CostCenterResourceChanges{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
