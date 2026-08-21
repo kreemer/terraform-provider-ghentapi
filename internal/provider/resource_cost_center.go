@@ -26,12 +26,20 @@ var _ resource.Resource = &CostCenterResource{}
 var _ resource.ResourceWithImportState = &CostCenterResource{}
 
 // costCenterResourceTypeUser, etc. are the resource "type" values used by the
-// GitHub cost center API.
+// GitHub cost center API. GitHub's REST API description documents the
+// "resources[].type" field of the cost center endpoints as "User", "Org", or
+// "Repo" (see github/rest-api-description, descriptions/ghec/ghec.json). The
+// long-form aliases below are also accepted defensively in case a future API
+// version returns them instead. The enterprise team type value is not
+// documented; "Team" and "EnterpriseTeam" are both accepted.
 const (
-	costCenterResourceTypeUser         = "User"
-	costCenterResourceTypeOrganization = "Organization"
-	costCenterResourceTypeRepository   = "Repository"
-	costCenterResourceTypeTeam         = "Team"
+	costCenterResourceTypeUser             = "User"
+	costCenterResourceTypeOrganization     = "Org"
+	costCenterResourceTypeOrganizationLong = "Organization"
+	costCenterResourceTypeRepository       = "Repo"
+	costCenterResourceTypeRepositoryLong   = "Repository"
+	costCenterResourceTypeTeam             = "Team"
+	costCenterResourceTypeTeamLong         = "EnterpriseTeam"
 )
 
 // NewCostCenterResource returns a new instance of CostCenterResource.
@@ -308,11 +316,11 @@ func bucketResourcesByType(resources []githubclient.CostCenterResource) (users, 
 		switch res.Type {
 		case costCenterResourceTypeUser:
 			users = append(users, v)
-		case costCenterResourceTypeOrganization:
+		case costCenterResourceTypeOrganization, costCenterResourceTypeOrganizationLong:
 			orgs = append(orgs, v)
-		case costCenterResourceTypeRepository:
+		case costCenterResourceTypeRepository, costCenterResourceTypeRepositoryLong:
 			repos = append(repos, v)
-		case costCenterResourceTypeTeam:
+		case costCenterResourceTypeTeam, costCenterResourceTypeTeamLong:
 			teams = append(teams, v)
 		}
 	}
