@@ -653,7 +653,7 @@ func TestClient_GetCostCenter_Found(t *testing.T) {
 			"ai_credit_pool_enabled": true,
 			"resources": []map[string]string{
 				{"type": "User", "name": "monalisa"},
-				{"type": "Organization", "name": "my-org"},
+				{"type": "Org", "name": "my-org"},
 			},
 		})
 	})

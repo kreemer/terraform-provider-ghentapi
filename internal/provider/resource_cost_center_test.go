@@ -14,8 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
+	"github.com/kreemer/terraform-provider-ghentapi/internal/githubclient"
 )
 
 // mockCostCenter represents a single cost center in the mock server state.
@@ -165,10 +168,10 @@ func handleCostCenterResourceRequest(w http.ResponseWriter, r *http.Request, cc 
 			cc.resources = append(cc.resources, map[string]string{"type": "User", "name": u})
 		}
 		for _, o := range body.Organizations {
-			cc.resources = append(cc.resources, map[string]string{"type": "Organization", "name": o})
+			cc.resources = append(cc.resources, map[string]string{"type": "Org", "name": o})
 		}
 		for _, rp := range body.Repositories {
-			cc.resources = append(cc.resources, map[string]string{"type": "Repository", "name": rp})
+			cc.resources = append(cc.resources, map[string]string{"type": "Repo", "name": rp})
 		}
 		for _, tm := range body.EnterpriseTeams {
 			cc.resources = append(cc.resources, map[string]string{"type": "Team", "name": tm})
@@ -182,10 +185,10 @@ func handleCostCenterResourceRequest(w http.ResponseWriter, r *http.Request, cc 
 			toRemove["User\x00"+u] = struct{}{}
 		}
 		for _, o := range body.Organizations {
-			toRemove["Organization\x00"+o] = struct{}{}
+			toRemove["Org\x00"+o] = struct{}{}
 		}
 		for _, rp := range body.Repositories {
-			toRemove["Repository\x00"+rp] = struct{}{}
+			toRemove["Repo\x00"+rp] = struct{}{}
 		}
 		for _, tm := range body.EnterpriseTeams {
 			toRemove["Team\x00"+tm] = struct{}{}
@@ -351,6 +354,43 @@ resource "ghentapi_cost_center" "test" {
 			},
 		},
 	})
+}
+
+// TestBucketResourcesByType_RealAPITypeValues is a regression test for
+// issue #13: GitHub's cost center API returns "Org"/"Repo" (not
+// "Organization"/"Repository") in resources[].type, so any resource with
+// these real-world values must be bucketed correctly instead of being
+// silently dropped.
+func TestBucketResourcesByType_RealAPITypeValues(t *testing.T) {
+	resources := []githubclient.CostCenterResource{
+		{Type: "User", Name: "monalisa"},
+		{Type: "Org", Name: "my-org"},
+		{Type: "Repo", Name: "octocat/hello-world"},
+		{Type: "Team", Name: "my-team"},
+		// Long-form aliases should also still be accepted defensively.
+		{Type: "Organization", Name: "my-other-org"},
+		{Type: "Repository", Name: "octocat/other-world"},
+		{Type: "EnterpriseTeam", Name: "my-other-team"},
+	}
+
+	users, orgs, repos, teams := bucketResourcesByType(resources)
+
+	if len(users) != 1 {
+		t.Fatalf("expected 1 user, got %d: %v", len(users), users)
+	}
+	userValue, ok := users[0].(types.String)
+	if !ok || userValue.ValueString() != "monalisa" {
+		t.Errorf("expected users to contain monalisa, got %v", users)
+	}
+	if len(orgs) != 2 {
+		t.Errorf("expected 2 organizations, got %d: %v", len(orgs), orgs)
+	}
+	if len(repos) != 2 {
+		t.Errorf("expected 2 repositories, got %d: %v", len(repos), repos)
+	}
+	if len(teams) != 2 {
+		t.Errorf("expected 2 enterprise teams, got %d: %v", len(teams), teams)
+	}
 }
 
 func TestCostCenterResource_Import(t *testing.T) {
