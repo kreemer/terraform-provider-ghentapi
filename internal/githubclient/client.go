@@ -25,12 +25,6 @@ type ClientConfig struct {
 	EnterpriseAppInstallationID string
 	EnterpriseAppPEM            []byte
 
-	// EnterpriseFineGrainedToken is a fine-grained personal access token used
-	// for enterprise-level endpoints that do not support GitHub App
-	// authentication (e.g. the cost center billing API). Optional; when
-	// unset, calls that require it fail with a descriptive error.
-	EnterpriseFineGrainedToken string
-
 	// Org-level GitHub App credentials — used to manage org settings.
 	OrgAppID            string
 	OrgAppClientID      string
@@ -482,23 +476,6 @@ func (c *Client) DoWithEnterpriseAppJWT(ctx context.Context, method, path string
 	})
 }
 
-// DoWithEnterpriseFineGrainedAuth executes a request authenticated with the
-// enterprise fine-grained personal access token. Some enterprise-level
-// endpoints — such as the cost center billing API — do not support GitHub
-// App authentication and require a fine-grained (or classic) PAT instead. If
-// no token is configured, an error is returned explaining that
-// enterprise_fine_grained_token must be set on the provider.
-func (c *Client) DoWithEnterpriseFineGrainedAuth(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
-	if c.cfg.EnterpriseFineGrainedToken == "" {
-		return nil, fmt.Errorf("this endpoint requires a fine-grained personal access token: " +
-			"GitHub does not support GitHub App authentication here. " +
-			"Set the enterprise_fine_grained_token provider attribute")
-	}
-	return c.Do(ctx, method, path, body, map[string]string{
-		"Authorization": "Bearer " + c.cfg.EnterpriseFineGrainedToken,
-	})
-}
-
 // DoWithOrgAuth executes a request authenticated with the org app installation
 // token for the given organisation.
 func (c *Client) DoWithOrgAuth(ctx context.Context, org, method, path string, body interface{}) (*http.Response, error) {
@@ -802,7 +779,7 @@ func (c *Client) CreateCostCenter(ctx context.Context, name string, aiCreditPool
 		"name":                   name,
 		"ai_credit_pool_enabled": aiCreditPoolEnabled,
 	}
-	resp, err := c.DoWithEnterpriseFineGrainedAuth(ctx, http.MethodPost, path, payload)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPost, path, payload)
 	if err != nil {
 		return CostCenter{}, fmt.Errorf("creating cost center: %w", err)
 	}
@@ -831,7 +808,7 @@ func (c *Client) GetCostCenter(ctx context.Context, costCenterID string) (costCe
 		return CostCenter{}, false, err
 	}
 	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s", slug, costCenterID)
-	resp, err := c.DoWithEnterpriseFineGrainedAuth(ctx, http.MethodGet, path, nil)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return CostCenter{}, false, fmt.Errorf("getting cost center: %w", err)
 	}
@@ -872,7 +849,7 @@ func (c *Client) UpdateCostCenter(ctx context.Context, costCenterID string, name
 	}
 
 	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s", slug, costCenterID)
-	resp, err := c.DoWithEnterpriseFineGrainedAuth(ctx, http.MethodPatch, path, payload)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPatch, path, payload)
 	if err != nil {
 		return CostCenter{}, fmt.Errorf("updating cost center: %w", err)
 	}
@@ -902,7 +879,7 @@ func (c *Client) DeleteCostCenter(ctx context.Context, costCenterID string) erro
 		return err
 	}
 	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s", slug, costCenterID)
-	resp, err := c.DoWithEnterpriseFineGrainedAuth(ctx, http.MethodDelete, path, nil)
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return fmt.Errorf("deleting cost center: %w", err)
 	}
@@ -933,7 +910,7 @@ func (c *Client) AddCostCenterResources(ctx context.Context, costCenterID string
 		return err
 	}
 	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s/resource", slug, costCenterID)
-	resp, err := c.DoWithEnterpriseFineGrainedAuth(ctx, http.MethodPost, path, changes.toPayload())
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodPost, path, changes.toPayload())
 	if err != nil {
 		return fmt.Errorf("adding cost center resources: %w", err)
 	}
@@ -957,7 +934,7 @@ func (c *Client) RemoveCostCenterResources(ctx context.Context, costCenterID str
 		return err
 	}
 	path := fmt.Sprintf("/enterprises/%s/settings/billing/cost-centers/%s/resource", slug, costCenterID)
-	resp, err := c.DoWithEnterpriseFineGrainedAuth(ctx, http.MethodDelete, path, changes.toPayload())
+	resp, err := c.DoWithEnterpriseAuth(ctx, http.MethodDelete, path, changes.toPayload())
 	if err != nil {
 		return fmt.Errorf("removing cost center resources: %w", err)
 	}
