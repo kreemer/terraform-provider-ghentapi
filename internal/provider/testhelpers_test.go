@@ -129,7 +129,6 @@ provider "ghentapi" {
   org_app_client_id              = "org-client-id"
   org_app_pem_file               = "%s"
   auto_install_org_app           = true
-  enterprise_fine_grained_token  = "ent-fine-grained-pat"
 }
 `, baseURL, escapedPEM, escapedPEM)
 }

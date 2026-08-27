@@ -90,5 +90,4 @@ variable "ent_fine_grained_token" {
 
 - `auto_install_org_app` (Boolean) When `true` (default), the org-level GitHub App is installed automatically into an organisation the first time a resource targets it. When `false`, an error is returned if the app is not already installed.
 - `base_url` (String) GitHub API base URL. Use `https://api.github.com` for GitHub.com or `https://{hostname}/api/v3` for GitHub Enterprise Server. Defaults to `https://api.github.com`.
-- `enterprise_fine_grained_token` (String, Sensitive) Fine-grained (or classic) personal access token for the enterprise. Some enterprise-level endpoints — such as the cost center billing API used by `ghentapi_cost_center` — do not support GitHub App authentication and require a PAT instead. Optional; only required if you use resources that need it. The provider automatically selects the correct credential per endpoint, so GitHub App credentials and this token can both be configured at the same time.
 - `repository_selection` (String) Repository selection used when auto-installing the org app. Must be `all` or `selected`. Defaults to `all`.
